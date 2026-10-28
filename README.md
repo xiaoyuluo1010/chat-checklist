@@ -63,6 +63,10 @@ Answer `y` to add the marketplace, then choose a scope.
 
 If you only want to try it in one chat, copy this folder to `~/.claude/dev-mods/<session id>/chat-checklist/` and answer **Turn them on** when asked. A mod copied this way belongs to that one chat; each chat needs its own copy.
 
+## Adding it to a chat already in progress
+
+Each chat gets its own, initially empty list. If the chat already holds work, Claude builds the first version once from the conversation so far and from small project notes it finds (a handoff, progress or TODO file). It does not scan your whole folder and does not invent items it cannot support. Check that first list and correct it; after that it is maintained as usual.
+
 ## Where the lists live
 
 `~/.claude/chat-checklists/<session id>.md`, one plain Markdown file per chat. You can open and edit it yourself; the pane refreshes within about two seconds.
