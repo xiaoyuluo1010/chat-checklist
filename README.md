@@ -14,7 +14,7 @@ Installing the mod changes nothing by itself. In a chat where you want a checkli
 
 That creates the chat's list and starts it. Chats where you do not do this stay untouched: no list, no band above the prompt, no messages. Typing the command again later opens the pane. A list file with no items yet counts as off, so a chat you enabled but never used stays quiet after a restart.
 
-Lists are tied to the chat's session id. If a resumed chat gets a new id, run the command again; Claude then rebuilds the first list from the conversation (see below).
+Lists are tied to the chat's session id, and reopening an old chat sometimes gives it a new id. The mod then finds the list the chat used last (its file is named in the chat's own history) and copies it over, so the list carries on. If it cannot (for example after the history was compacted), run the command again and Claude rebuilds the first list from the conversation (see below).
 
 ## What you see
 
@@ -104,6 +104,15 @@ Each chat you turn it on for gets its own, initially empty list. If the chat alr
 ## Author and credit
 
 Created by xiaoyuluo1010 (first version October 2026). The original repository, its commit history and its release tags are the record of authorship. If you fork or adapt it, the license requires you to keep `NOTICE` and to mark any file you changed as changed.
+
+## Development
+
+```
+claude plugin validate .
+claude plugin test .
+```
+
+Tests live in `hooks/register.test.tsx`.
 
 ## License
 

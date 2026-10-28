@@ -287,6 +287,7 @@ async function rulesOf($: any): Promise<string> {
 
 let registered = false
 let running = false
+let tries = 0
 
 // The list is opt-in per chat: it runs only where a list with items already exists,
 // or after /chat-checklist. A header-only file counts as off.
@@ -296,6 +297,34 @@ async function isOn($: any): Promise<boolean> {
   } catch {
     return false
   }
+}
+
+// A chat resumed under a new session id keeps its transcript, and with it the rules note
+// a session appends at start, which names that session's list file. The newest such note
+// names the list this chat used last; if it is not this session's own, copy it over.
+const NOTE = /^Chat Checklist: this chat has a running next-step list at (\S+\.md)\./
+
+async function inherit($: any): Promise<boolean> {
+  const file = await pathOf($)
+  const found = await $.session.messages()
+  if (!Array.isArray(found)) return false
+  for (let i = found.length - 1; i >= 0; i--) {
+    const m = found[i]
+    const hit = m.role === 'user' ? NOTE.exec((m.text ?? '').trim()) : null
+    if (!hit) continue
+    if (hit[1] === file) return false
+    try {
+      const src = await $.fs.read(hit[1])
+      if (!src.split('\n').some((l: string) => TASK.test(l))) return false
+      await $.fs.write(file, src)
+
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  return false
 }
 
 async function start($: any): Promise<void> {
@@ -316,7 +345,13 @@ async function ensure($: any): Promise<void> {
       description: 'Turn on the Chat Checklist for this chat, or open its pane',
     })
   }
-  if (await isOn($)) await start($)
+  if (running) return
+  if (await isOn($)) return start($)
+  // The transcript may not be read yet at start, so a few prompts try again.
+  if (tries < 3) {
+    tries += 1
+    if (await inherit($).catch(() => false)) await start($)
+  }
 }
 
 export const register: Register = on => {
