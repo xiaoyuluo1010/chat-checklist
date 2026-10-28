@@ -1,0 +1,12 @@
+{
+  "name": "chat-checklist",
+  "owner": {
+    "name": "xiaoyuluo1010"
+  },
+  "plugins": [
+    {
+      "name": "chat-checklist",
+      "source": "./"
+    }
+  ]
+}
