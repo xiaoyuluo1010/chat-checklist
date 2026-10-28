@@ -1,7 +1,7 @@
 {
   "name": "chat-checklist",
   "version": "0.3.0",
-  "description": "A per-chat checklist of next steps. Claude keeps it in a file as it works; you read, tick and reorder it in a pane and a one-line band above the prompt.",
+  "description": "Helps record and track the workflow of each Claude Code chat: a per-chat checklist of next steps, kept by Claude and shown in a pane and a band above the prompt.",
   "types": "./types/index.d.ts",
   "author": {
     "name": "xiaoyuluo1010"

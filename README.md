@@ -1,6 +1,6 @@
 # chat-checklist
 
-A Claude Code mod that gives every chat its own **checklist of next steps**.
+A Claude Code mod that helps record and track the workflow of each chat. It gives every chat its own **checklist of next steps**.
 
 Claude writes and updates the list by itself while it works. You read it at a glance, tick things, reorder, and remove, without re-reading long replies to find out what comes next.
 
