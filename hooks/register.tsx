@@ -264,19 +264,6 @@ async function edit($: any, change: (lines: string[]) => string[] | undefined): 
   await update($, text, () => src)
 }
 
-// Opens the pane and reports where it went, so a pane that does not show can be diagnosed.
-async function diag($: any, why: string): Promise<string> {
-  let line: string
-  try {
-    const opened = await $.ui.open({ id: PANE, title: TITLE })
-    const surfaces = await $.session.surfaces()
-    line = `${why}: opened=${JSON.stringify(opened)} surfaces=${JSON.stringify(surfaces)}`
-  } catch (err) {
-    line = `${why}: open failed ${String(err)}`
-  }
-  return line
-}
-
 async function rulesOf($: any): Promise<string> {
   const file = await pathOf($)
 
@@ -298,21 +285,38 @@ async function rulesOf($: any): Promise<string> {
   ].join('\n')
 }
 
-let started = false
+let registered = false
+let running = false
 
-async function ensure($: any): Promise<void> {
-  if (started) return
-  started = true
-  await $.command.register({
-    name: 'chat-checklist',
-    description: 'Open the Chat Checklist pane (this chat’s next-step list)',
-  })
+// The list is opt-in per chat: it runs only where a list with items already exists,
+// or after /chat-checklist. A header-only file counts as off.
+async function isOn($: any): Promise<boolean> {
+  try {
+    return (await $.fs.read(await pathOf($))).split('\n').some((l: string) => TASK.test(l))
+  } catch {
+    return false
+  }
+}
+
+async function start($: any): Promise<void> {
+  if (running) return
+  running = true
   await load($)
   $.clock.every(POLL_MS, () => load($).catch(() => {}))
-  // prompt.compose may be bypassed by a policy plugin, so the rules also go in once as a note.
   await $.session
     .append({ message: { type: 'user', content: [{ type: 'text', text: await rulesOf($) }] } })
     .catch(() => {})
+}
+
+async function ensure($: any): Promise<void> {
+  if (!registered) {
+    registered = true
+    await $.command.register({
+      name: 'chat-checklist',
+      description: 'Turn on the Chat Checklist for this chat, or open its pane',
+    })
+  }
+  if (await isOn($)) await start($)
 }
 
 export const register: Register = on => {
@@ -330,18 +334,15 @@ export const register: Register = on => {
   })
 
   on('command.run', { command: 'chat-checklist' }, async $ => {
-    const line = await diag($, 'command')
+    if (await isOn($)) {
+      await $.ui.open({ id: PANE, title: TITLE })
 
-    return { text: `${line}\nFile: ${await pathOf($)}` }
-  })
-
-  on('prompt.compose', async ($, e, next) => {
-    const r = await next(e)
-    const rules = await rulesOf($)
-
-    return {
-      sections: [...r.sections, { id: 'chat-checklist:rules', text: rules, scope: 'session' }],
+      return { text: `Chat Checklist pane opened. List file: ${await pathOf($)}` }
     }
+    await $.fs.write(await pathOf($), HEADER)
+    await start($)
+
+    return { text: 'Chat Checklist is on for this chat. Claude will keep its list; the next step shows above the prompt.' }
   })
 
   // One line above the prompt: the item we are on, so no extra column is needed.

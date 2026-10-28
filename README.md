@@ -4,6 +4,18 @@ A Claude Code mod that helps record and track the workflow of each chat. It give
 
 Claude writes and updates the list by itself while it works. You read it at a glance, tick things, reorder, and remove, without re-reading long replies to find out what comes next.
 
+## Turn it on, per chat
+
+Installing the mod changes nothing by itself. In a chat where you want a checklist, type:
+
+```
+/chat-checklist
+```
+
+That creates the chat's list and starts it. Chats where you do not do this stay untouched: no list, no band above the prompt, no messages. Typing the command again later opens the pane. A list file with no items yet counts as off, so a chat you enabled but never used stays quiet after a restart.
+
+Lists are tied to the chat's session id. If a resumed chat gets a new id, run the command again; Claude then rebuilds the first list from the conversation (see below).
+
 ## What you see
 
 **1. A one-line band above the prompt** (always visible)
@@ -65,7 +77,7 @@ If you only want to try it in one chat, copy this folder to `~/.claude/dev-mods/
 
 ## Adding it to a chat already in progress
 
-Each chat gets its own, initially empty list. If the chat already holds work, Claude builds the first version once from the conversation so far and from small project notes it finds (a handoff, progress or TODO file). It does not scan your whole folder and does not invent items it cannot support. Check that first list and correct it; after that it is maintained as usual.
+Each chat you turn it on for gets its own, initially empty list. If the chat already holds work, Claude builds the first version once from the conversation so far and from small project notes it finds (a handoff, progress or TODO file). It does not scan your whole folder and does not invent items it cannot support. Check that first list and correct it; after that it is maintained as usual.
 
 ## Where the lists live
 
