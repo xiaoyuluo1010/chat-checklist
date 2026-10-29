@@ -241,6 +241,51 @@ async function markOn($: any): Promise<void> {
   await $.fs.write(await onPathOf($), 'on\n')
 }
 
+// The desktop app may not take $.ui.copy yet; the mod runs on the person's own machine, so the
+// system clipboard tool is the fallback.
+async function copyText($: any, text: string): Promise<void> {
+  let done = false
+  try {
+    done = (await $.ui.copy({ text }))?.isCopied === true
+  } catch {}
+  if (!done) {
+    for (const argv of [['pbcopy'], ['wl-copy'], ['xclip', '-selection', 'clipboard']]) {
+      try {
+        const r = await $.process.run(argv, { stdin: text, timeoutMs: 3000 })
+        if (r?.exitCode === 0) {
+          done = true
+          break
+        }
+      } catch {}
+    }
+  }
+  await $.ui.toast(done ? 'Copied' : 'Could not copy').catch(() => {})
+}
+
+// One item as plain text: its title, its notes, then its sub-items with their notes.
+function plainOf(lines: string[], body: string): string {
+  const idx = findLine(lines, body)
+  if (idx < 0) return body
+  const base = TASK.exec(lines[idx])?.[1].length ?? 0
+  const out: string[] = []
+  for (const raw of lines.slice(idx, fullEnd(lines, idx))) {
+    const t = TASK.exec(raw)
+    const d = DETAIL.exec(raw)
+    if (t) out.push(t[1].length === base ? t[3] : `${' '.repeat(t[1].length - base - 2)}- ${t[3]}`)
+    else if (d) out.push(`${' '.repeat(Math.max(0, raw.search(/\S/) - base))}${d[1]}`)
+  }
+
+  return out.join('\n')
+}
+
+// The whole list as plain Markdown, without the file's header comment.
+const plainAll = (src: string): string =>
+  src
+    .split('\n')
+    .filter(l => !l.startsWith('<!--') && !l.startsWith('# '))
+    .join('\n')
+    .trim()
+
 async function load($: any): Promise<void> {
   const file = await pathOf($)
   let src: string
@@ -523,14 +568,19 @@ export const register: Register = on => {
     const stateMark = STATE_MARK[markKey(left, status.state)]
 
     // Hover-only controls for one item: move up, move down, remove.
-    const controls = (k: string, body: string) => (
+    const controls = (k: string, body: string, isDone: boolean) => (
       <Box display="none" hover={{ display: 'flex' }}>
         <Markdown
           key={k}
           dimColor
-          text="[✓](https://chat-checklist.invalid/tick) [▲](https://chat-checklist.invalid/up) [▼](https://chat-checklist.invalid/down) [✕](https://chat-checklist.invalid/remove)"
+          text={
+            isDone
+              ? '[⧉](https://chat-checklist.invalid/copy)'
+              : '[⧉](https://chat-checklist.invalid/copy) [✓](https://chat-checklist.invalid/tick) [▲](https://chat-checklist.invalid/up) [▼](https://chat-checklist.invalid/down) [✕](https://chat-checklist.invalid/remove)'
+          }
           onLinkPress={link => {
-            if (link.href.endsWith('/tick')) void edit($, lines => toggleLines(lines, body))
+            if (link.href.endsWith('/copy')) void copyText($, plainOf(src.split('\n'), body))
+            else if (link.href.endsWith('/tick')) void edit($, lines => toggleLines(lines, body))
             else if (link.href.endsWith('/up')) void edit($, lines => moveLines(lines, body, -1))
             else if (link.href.endsWith('/down')) void edit($, lines => moveLines(lines, body, 1))
             else void update($, pending, () => body)
@@ -583,6 +633,13 @@ export const register: Register = on => {
             text={canRedo ? '[**↷ Redo**](https://chat-checklist.invalid/redo)' : '**↷ Redo**'}
             onLinkPress={() => void stepRedo($)}
           />
+          {items.length > 0 && (
+            <Markdown
+              key="copyall"
+              text="[**⧉ Copy all**](https://chat-checklist.invalid/copyall)"
+              onLinkPress={() => void copyText($, plainAll(src))}
+            />
+          )}
         </Box>
         {hidden.size > 0 && (
           <Button key="older" plain onPress={() => update($, showOlder, v => !v)}>
@@ -632,7 +689,7 @@ export const register: Register = on => {
                       </Button>
                     )}
                   </Box>
-                  {!isDone && ask !== it.body && controls(`m${it.line}`, it.body)}
+                  {ask !== it.body && controls(`m${it.line}`, it.body, isDone)}
                 </Box>
                 {!isDone && ask === it.body && confirm(`${it.line}`, it.body, 3)}
                 {isOpened && (isClipped || it.details.length > 0) && (

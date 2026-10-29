@@ -202,3 +202,27 @@ test('a file read or a file elsewhere is not taken as the list', async ($, on) =
 
   expect(Object.keys(writes).length).toBe(0)
 })
+
+test('copy puts an item, with its sub-items and notes, on the clipboard', async ($, on) => {
+  world(on, 'v', [], { [`${dir}/v.md`]: SHOWN.replace('  - [ ] Rerun\n', '  - [ ] Rerun\n  > batch 2 shifted\n'), [`${dir}/v.on`]: 'on\n' })
+  on('ui.panes', () => ({ value: [] }))
+  on('ui.toast', () => ({ value: undefined }))
+  on('ui.copy', () => ({ value: { isCopied: false, reason: 'no path' } }))
+  const piped: string[] = []
+  on('process.run', (_: any, e: any) => {
+    piped.push(e.init?.stdin ?? e.stdin)
+
+    return { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  await begin($)
+  const pane = await $.ui.mount({
+    plugin: 'chat-checklist',
+    component: 'Pane',
+    requestId: 'chat-checklist',
+    surface: 'desktop',
+    props: { title: 'Chat Checklist', isFocused: false, bodyColumns: 40, placement: 'dock', scroll: { offset: 0, bodyRows: 20 }, view: {} },
+  } as any)
+  const all = await pane.find({ type: 'Markdown', text: /Copy all/ } as any)
+  expect(all).toBeDefined()
+  await pane.unmount()
+})

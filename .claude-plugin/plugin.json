@@ -1,6 +1,6 @@
 {
   "name": "chat-checklist",
-  "version": "0.6.2",
+  "version": "0.7.0",
   "description": "Helps record and track the workflow of each Claude Code chat: a per-chat checklist of next steps, kept by Claude and shown in a pane and a band above the prompt.",
   "types": "./types/index.d.ts",
   "author": {

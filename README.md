@@ -52,7 +52,8 @@ Click `open list ›` to open the full list in a side pane, `close list ›` to 
 Sub-steps use the same three marks. The desktop app, the editor and mobile draw them as small pictures (a filled blue circle with a white tick, a thick green ring, a thin gray ring); the terminal uses the text glyphs.
 
 - Click a done or not-started title to expand its sub-steps and notes. The item in progress is always expanded.
-- Hover a not-yet-done item to get `✓ ▲ ▼ ✕` (tick, move up, move down, remove). Remove asks for confirmation. Done items are locked from reordering and removal on purpose.
+- Hover a not-yet-done item to get `⧉ ✓ ▲ ▼ ✕` (copy, tick, move up, move down, remove). Remove asks for confirmation. Done items show only `⧉`: they are locked from reordering and removal on purpose.
+- `⧉` copies the item with its sub-steps and notes as plain text; `⧉ Copy all` at the top copies the whole list. The pane's text cannot be selected with the mouse (the app draws it natively), so these are the way to copy.
 - `↶ Undo` / `↷ Redo` at the top step back and forward through your edits and Claude's edits (last 30).
 - The bottom label shows the chat's state: **Ongoing**, **Done**, **Parked**, **Archive**.
 
