@@ -7,6 +7,10 @@ declare module 'claude-code' {
       pending: Shaped<string>
       undo: Shaped<string[]>
       redo: Shaped<string[]>
+      changes: Shaped<string[]>
+      undoWhat: Shaped<string[]>
+      redoWhat: Shaped<string[]>
+      seen: Shaped<string>
     }
   }
 }

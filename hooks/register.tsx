@@ -30,6 +30,29 @@ const redo = atom({ plugin: 'chat-checklist', key: 'redo' } as const, [] as stri
   shape: 'redo-1',
 })
 const HISTORY = 30
+// What each undo and redo step does, beside its snapshot, for the hover label.
+const undoWhat = atom({ plugin: 'chat-checklist', key: 'undoWhat' } as const, [] as string[], {
+  shape: 'undoWhat-1',
+})
+const redoWhat = atom({ plugin: 'chat-checklist', key: 'redoWhat' } as const, [] as string[], {
+  shape: 'redoWhat-1',
+})
+
+// Puts a snapshot on the undo stack with what it undoes; a new change clears redo.
+async function pushUndo($: any, snap: string, what: string): Promise<void> {
+  await update($, undo, l => [...l, snap].slice(-HISTORY))
+  await update($, undoWhat, l => [...l, what].slice(-HISTORY))
+  await update($, redo, () => [])
+  await update($, redoWhat, () => [])
+}
+
+// What the person changed in the pane since Claude last heard, and the list as Claude last knew it.
+const changes = atom({ plugin: 'chat-checklist', key: 'changes' } as const, [] as string[], {
+  shape: 'changes-1',
+})
+const seen = atom({ plugin: 'chat-checklist', key: 'seen' } as const, '', {
+  shape: 'seen-1',
+})
 
 // Clickable controls are light blue where the surface honours it.
 const BLUE = '#6aa6e6'
@@ -298,23 +321,53 @@ async function load($: any): Promise<void> {
   const cur = await read($, text)
   if (cur !== src) {
     // A change made outside the list (Claude's edit) is one undo step too.
-    if (cur) {
-      await update($, undo, l => [...l, cur].slice(-HISTORY))
-      await update($, redo, () => [])
-    }
+    if (cur) await pushUndo($, cur, "Claude's last update to the list")
     await update($, text, () => src)
   }
+}
+
+// One pane edit of the person's, kept until Claude is told.
+async function noteChange($: any, before: string, what: string): Promise<void> {
+  if (!(await read($, seen))) await update($, seen, () => before)
+  await update($, changes, l => [...l, what].slice(-HISTORY))
+}
+
+// The person's pane edits since Claude last heard, as a note for Claude, then cleared.
+// Nothing when they undid their way back to the list Claude knew.
+async function takeChanges($: any): Promise<string | undefined> {
+  const log = await read($, changes)
+  if (log.length === 0) return undefined
+  const base = await read($, seen)
+  await update($, changes, () => [])
+  await update($, seen, () => '')
+  let now = ''
+  try {
+    now = await $.fs.read(await pathOf($))
+  } catch {}
+  if (now === base) return undefined
+
+  return [
+    'Chat Checklist: the user changed the list themselves in the pane since you last saw it:',
+    ...log.map(l => `- ${l}`),
+    'The list now:',
+    plainAll(now) || '(empty)',
+    'Take this as their decision: plan from the list as it is now and never put back what they changed. In your reply, say in one short line that you saw their change. If it conflicts with what you were doing or planned (they reopened, removed or reordered a step you depend on, or ticked off something you think is unfinished), ask them to confirm before acting on it.',
+  ].join('\n')
 }
 
 async function stepUndo($: any): Promise<void> {
   const stack = await read($, undo)
   if (stack.length === 0) return
   const prev = stack[stack.length - 1]
+  const what = (await read($, undoWhat)).slice(-1)[0] ?? 'the last change'
   const file = await pathOf($)
   const cur = await $.fs.read(file)
   await $.fs.write(file, prev)
+  await noteChange($, cur, `undid: ${what}`)
   await update($, undo, l => l.slice(0, -1))
+  await update($, undoWhat, l => l.slice(0, -1))
   await update($, redo, l => [...l, cur].slice(-HISTORY))
+  await update($, redoWhat, l => [...l, what].slice(-HISTORY))
   await update($, text, () => prev)
 }
 
@@ -322,24 +375,29 @@ async function stepRedo($: any): Promise<void> {
   const stack = await read($, redo)
   if (stack.length === 0) return
   const next = stack[stack.length - 1]
+  const what = (await read($, redoWhat)).slice(-1)[0] ?? 'the last undone change'
   const file = await pathOf($)
   const cur = await $.fs.read(file)
   await $.fs.write(file, next)
+  await noteChange($, cur, `redid: ${what}`)
   await update($, redo, l => l.slice(0, -1))
+  await update($, redoWhat, l => l.slice(0, -1))
   await update($, undo, l => [...l, cur].slice(-HISTORY))
+  await update($, undoWhat, l => [...l, what].slice(-HISTORY))
   await update($, text, () => next)
 }
 
-// Re-reads the file, applies one edit to its lines, writes it back.
-async function edit($: any, change: (lines: string[]) => string[] | undefined): Promise<void> {
+// Re-reads the file, applies one edit of the person's to its lines, writes it back.
+async function edit($: any, what: string, change: (lines: string[]) => string[] | undefined): Promise<void> {
   const file = await pathOf($)
   const before = await $.fs.read(file)
   const out = change(before.split('\n'))
   if (!out) return
   const src = out.join('\n')
+  if (src === before) return
   await $.fs.write(file, src)
-  await update($, undo, l => [...l, before].slice(-HISTORY))
-  await update($, redo, () => [])
+  await noteChange($, before, what)
+  await pushUndo($, before, what)
   await update($, text, () => src)
 }
 
@@ -360,7 +418,8 @@ async function rulesOf($: any): Promise<string> {
     '- Optional detail lines go directly under an item, each as `  > text` (two spaces, `>`). Core details, the reason, what it follows from and leads to. Keep them to about 4 short lines for done or not-started items; for an in-progress item write as much as the work needs. Skip them for trivial steps.',
     '- If the project already keeps its own handoff or progress notes (for example a handoff file, a progress log or a TODO file), do not duplicate that context here: one line pointing to it is enough.',
     '- Final state of the chat: a line `status: done` (finished for good), `status: park` (nothing to do now, chat kept for possible new tasks; optional note after it, e.g. `status: park waiting for new data`) or `status: archive` right under the header comment. No line means ongoing. When every top-level item is done, ask the user once in chat whether to mark it done, park or archive, then write the line. If you add a new task while a status line exists, delete the status line (back to ongoing).',
-    '- No history or long rationale in the list. Do not mention the file in chat unless asked. Respect what the user changed.',
+    '- No history or long rationale in the list. Do not mention the file in chat unless asked.',
+    '- The user can tick, reopen, move and remove items in the pane. Each change they make reaches you as a note (with your next prompt, or in place of your next edit of the list). Their change is their decision: never put it back; acknowledge it in one short line, and ask them to confirm before acting on any change that conflicts with your plan.',
   ].join('\n')
 }
 
@@ -471,6 +530,18 @@ export const register: Register = on => {
   on('prompt.submit', async ($, e, next) => {
     // A failure here must never hold up the person's prompt.
     await ensure($).catch(() => {})
+    const said = running ? await takeChanges($).catch(() => undefined) : undefined
+
+    return next(said ? { ...e, context: [...(e.context ?? []), said] } : e)
+  })
+
+  // Claude editing the list with pane changes it has not heard of: refuse once, with the changes.
+  on('tool.call', async ($, e, next) => {
+    const path = (e as any).file_path
+    if ((e.tool === 'Edit' || e.tool === 'Write') && running && path === (await pathOf($))) {
+      const said = await takeChanges($).catch(() => undefined)
+      if (said) return { deny: `${said}\nRead the list again, then make your edit on top of their version.` }
+    }
 
     return next(e)
   })
@@ -550,6 +621,16 @@ export const register: Register = on => {
     const room = Math.max(12, (e.props.bodyColumns ?? 40) - 10)
     const canUndo = (await read($, undo)).length > 0
     const canRedo = (await read($, redo)).length > 0
+    const undoTip = (await read($, undoWhat)).slice(-1)[0]
+    const redoTip = (await read($, redoWhat)).slice(-1)[0]
+
+    // A label that floats under the button while the pointer is on it.
+    const tip = (k: string, said: string | undefined) =>
+      said ? (
+        <Box position="absolute" top={1} left={0} display="none" hover={{ display: 'flex' }} backgroundColor="text" paddingX={1}>
+          <Text color="inverseText">{said}</Text>
+        </Box>
+      ) : null
 
     // Top-level items, each with the sub-items indented under it.
     const groups: { top: Item; subs: Item[] }[] = []
@@ -567,22 +648,19 @@ export const register: Register = on => {
     const status = parseStatus(src)
     const stateMark = STATE_MARK[markKey(left, status.state)]
 
-    // Hover-only controls for one item: move up, move down, remove.
+    // Hover-only controls for one item: copy, tick (or reopen a done one), move up, move down, remove.
     const controls = (k: string, body: string, isDone: boolean) => (
       <Box display="none" hover={{ display: 'flex' }}>
         <Markdown
           key={k}
           dimColor
-          text={
-            isDone
-              ? '[⧉](https://chat-checklist.invalid/copy)'
-              : '[⧉](https://chat-checklist.invalid/copy) [✓](https://chat-checklist.invalid/tick) [▲](https://chat-checklist.invalid/up) [▼](https://chat-checklist.invalid/down) [✕](https://chat-checklist.invalid/remove)'
-          }
+          text={`[⧉](https://chat-checklist.invalid/copy) [${isDone ? '↺' : '✓'}](https://chat-checklist.invalid/tick) [▲](https://chat-checklist.invalid/up) [▼](https://chat-checklist.invalid/down) [✕](https://chat-checklist.invalid/remove)`}
           onLinkPress={link => {
             if (link.href.endsWith('/copy')) void copyText($, plainOf(src.split('\n'), body))
-            else if (link.href.endsWith('/tick')) void edit($, lines => toggleLines(lines, body))
-            else if (link.href.endsWith('/up')) void edit($, lines => moveLines(lines, body, -1))
-            else if (link.href.endsWith('/down')) void edit($, lines => moveLines(lines, body, 1))
+            else if (link.href.endsWith('/tick'))
+              void edit($, isDone ? `reopened "${body}" (was done)` : `marked "${body}" done`, lines => toggleLines(lines, body))
+            else if (link.href.endsWith('/up')) void edit($, `moved "${body}" up`, lines => moveLines(lines, body, -1))
+            else if (link.href.endsWith('/down')) void edit($, `moved "${body}" down`, lines => moveLines(lines, body, 1))
             else void update($, pending, () => body)
           }}
         />
@@ -597,7 +675,7 @@ export const register: Register = on => {
           key={`y${k}`}
           plain
           onPress={async () => {
-            await edit($, lines => removeLines(lines, body))
+            await edit($, `removed "${body}" with its sub-items and notes`, lines => removeLines(lines, body))
             await update($, pending, () => '')
           }}
         >
@@ -621,18 +699,24 @@ export const register: Register = on => {
           <Text dimColor>
             {left} open · {doneIdx.length} done
           </Text>
-          <Markdown
-            key="undo"
-            dimColor={!canUndo}
-            text={canUndo ? '[**↶ Undo**](https://chat-checklist.invalid/undo)' : '**↶ Undo**'}
-            onLinkPress={() => void stepUndo($)}
-          />
-          <Markdown
-            key="redo"
-            dimColor={!canRedo}
-            text={canRedo ? '[**↷ Redo**](https://chat-checklist.invalid/redo)' : '**↷ Redo**'}
-            onLinkPress={() => void stepRedo($)}
-          />
+          <Box key="undoAt">
+            <Markdown
+              key="undo"
+              dimColor={!canUndo}
+              text={canUndo ? '[**↶ Undo**](https://chat-checklist.invalid/undo)' : '**↶ Undo**'}
+              onLinkPress={() => void stepUndo($)}
+            />
+            {canUndo && tip('undo', `Undo: ${undoTip ?? 'the last change'}`)}
+          </Box>
+          <Box key="redoAt">
+            <Markdown
+              key="redo"
+              dimColor={!canRedo}
+              text={canRedo ? '[**↷ Redo**](https://chat-checklist.invalid/redo)' : '**↷ Redo**'}
+              onLinkPress={() => void stepRedo($)}
+            />
+            {canRedo && tip('redo', `Redo: ${redoTip ?? 'the last undone change'}`)}
+          </Box>
           {items.length > 0 && (
             <Markdown
               key="copyall"
@@ -691,7 +775,7 @@ export const register: Register = on => {
                   </Box>
                   {ask !== it.body && controls(`m${it.line}`, it.body, isDone)}
                 </Box>
-                {!isDone && ask === it.body && confirm(`${it.line}`, it.body, 3)}
+                {ask === it.body && confirm(`${it.line}`, it.body, 3)}
                 {isOpened && (isClipped || it.details.length > 0) && (
                   <Box flexDirection="column" marginLeft={5}>
                     {isClipped && !isBold && <Text color={isDone ? undefined : GRAY}>{it.body}</Text>}

@@ -52,9 +52,9 @@ Click `open list ›` to open the full list in a side pane, `close list ›` to 
 Sub-steps use the same three marks. The desktop app, the editor and mobile draw them as small pictures (a filled blue circle with a white tick, a thick green ring, a thin gray ring); the terminal uses the text glyphs.
 
 - Click a done or not-started title to expand its sub-steps and notes. The item in progress is always expanded.
-- Hover a not-yet-done item to get `⧉ ✓ ▲ ▼ ✕` (copy, tick, move up, move down, remove). Remove asks for confirmation. Done items show only `⧉`: they are locked from reordering and removal on purpose.
+- Hover an item to get `⧉ ✓ ▲ ▼ ✕` (copy, tick, move up, move down, remove). On a done item the tick is `↺`, which reopens it. Remove asks for confirmation.
 - `⧉` copies the item with its sub-steps and notes as plain text; `⧉ Copy all` at the top copies the whole list. The pane's text cannot be selected with the mouse (the app draws it natively), so these are the way to copy.
-- `↶ Undo` / `↷ Redo` at the top step back and forward through your edits and Claude's edits (last 30).
+- `↶ Undo` / `↷ Redo` at the top step back and forward through your edits and Claude's edits (last 30). Hover either one to see what it will undo or redo.
 - The bottom label shows the chat's state: **Ongoing**, **Done**, **Parked**, **Archive**.
 
 ## Who edits what
@@ -64,7 +64,12 @@ Sub-steps use the same three marks. The desktop app, the editor and mobile draw 
 | Top-level items | tick, reorder, remove | add, reword, mark in progress or done |
 | Sub-items and notes | read only | fully owns them |
 
-Claude keeps the list current silently as part of normal work. If you reorder or delete something, Claude re-reads the file before its next edit and respects your change.
+Claude keeps the list current silently as part of normal work. What you change in the pane is passed to Claude, so it never plans from a stale list or puts your change back:
+
+- With your next message, Claude gets a short note listing your changes and the list as it now stands. It says in one line that it saw them, and asks you to confirm if a change conflicts with its plan (for example you reopened a step, or removed one it depends on).
+- If Claude tries to edit the list mid-reply after you changed it, that edit is refused once with the same note, so it re-reads and builds on your version.
+- Changes you undo before Claude hears of them are not reported.
+- Only edits made with the pane's buttons are tracked. If you edit the file by hand, tell Claude.
 
 ## The rules Claude follows
 

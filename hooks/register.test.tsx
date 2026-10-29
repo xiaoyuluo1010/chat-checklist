@@ -226,3 +226,83 @@ test('copy puts an item, with its sub-items and notes, on the clipboard', async 
   expect(all).toBeDefined()
   await pane.unmount()
 })
+
+const PANE_PROPS = { title: 'Chat Checklist', isFocused: false, bodyColumns: 40, placement: 'dock', scroll: { offset: 0, bodyRows: 20 }, view: {} }
+const mountPane = ($: any, surface: string) =>
+  $.ui.mount({ plugin: 'chat-checklist', component: 'Pane', requestId: 'chat-checklist', surface, props: PANE_PROPS } as any)
+const tick = { href: 'https://chat-checklist.invalid/tick' }
+
+test('a done item can be reopened, moved and removed from the pane', async ($, on) => {
+  const writes = world(on, 'v', [], { [`${dir}/v.md`]: SHOWN, [`${dir}/v.on`]: 'on\n' })
+  on('ui.panes', () => ({ value: [] }))
+  await begin($)
+  const pane = await mountPane($, 'desktop')
+  const done = await pane.find({ type: 'Markdown', text: /↺/ } as any)
+  expect(done?.text).toContain('✕')
+  await pane.press({ key: (done as any).key, link: tick })
+  expect(writes[`${dir}/v.md`]).toContain('- [ ] Load the data')
+  await pane.unmount()
+})
+
+test('a change made in the pane reaches Claude once, with the next prompt', async ($, on) => {
+  world(on, 'v', [], { [`${dir}/v.md`]: SHOWN, [`${dir}/v.on`]: 'on\n' })
+  on('ui.panes', () => ({ value: [] }))
+  const seen: any[] = []
+  on('prompt.submit', (_: any, e: any) => {
+    seen.push(e)
+
+    return { text: e.text }
+  })
+  await begin($)
+  const pane = await mountPane($, 'desktop')
+  const done = await pane.find({ type: 'Markdown', text: /↺/ } as any)
+  await pane.press({ key: (done as any).key, link: tick })
+  const undoTip = await pane.find({ type: 'Text', text: /^Undo: / })
+  expect(undoTip?.text).toBe('Undo: reopened "Load the data" (was done)')
+  await pane.unmount()
+
+  await $.prompt.submit({ text: 'go on' })
+  await $.prompt.submit({ text: 'and then' })
+  const said = (seen[0]?.context ?? []).join('\n')
+  expect(said).toContain('reopened "Load the data" (was done)')
+  expect(said).toContain('- [ ] Load the data')
+  expect(seen[1]?.context ?? []).toHaveLength(0)
+})
+
+test('a change undone before Claude hears of it is not reported', async ($, on) => {
+  world(on, 'v', [], { [`${dir}/v.md`]: SHOWN, [`${dir}/v.on`]: 'on\n' })
+  on('ui.panes', () => ({ value: [] }))
+  const seen: any[] = []
+  on('prompt.submit', (_: any, e: any) => {
+    seen.push(e)
+
+    return { text: e.text }
+  })
+  await begin($)
+  const pane = await mountPane($, 'desktop')
+  const done = await pane.find({ type: 'Markdown', text: /↺/ } as any)
+  await pane.press({ key: (done as any).key, link: tick })
+  await pane.press({ key: 'undo', link: { href: 'https://chat-checklist.invalid/undo' } })
+  expect((await pane.find({ type: 'Text', text: /^Redo: / }))?.text).toBe('Redo: reopened "Load the data" (was done)')
+  await pane.unmount()
+
+  await $.prompt.submit({ text: 'go on' })
+  expect(seen[0]?.context ?? []).toHaveLength(0)
+})
+
+test("Claude's edit of the list over an unheard pane change is refused once, with the change", async ($, on) => {
+  world(on, 'v', [], { [`${dir}/v.md`]: SHOWN, [`${dir}/v.on`]: 'on\n' })
+  on('ui.panes', () => ({ value: [] }))
+  on('tool.call', () => ({ result: { text: 'edited' } }))
+  await begin($)
+  const pane = await mountPane($, 'desktop')
+  const done = await pane.find({ type: 'Markdown', text: /↺/ } as any)
+  await pane.press({ key: (done as any).key, link: tick })
+  await pane.unmount()
+
+  const edit = { tool: 'Edit', file_path: `${dir}/v.md`, old_string: 'a', new_string: 'b' } as any
+  const first: any = await $.tool.call(edit)
+  expect(first.deny).toContain('reopened "Load the data"')
+  const again: any = await $.tool.call(edit)
+  expect(again.deny).toBeUndefined()
+})
