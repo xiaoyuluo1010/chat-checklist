@@ -165,3 +165,40 @@ test('the pane and the band draw their marks on every surface', async ($, on) =>
     await band.unmount()
   }
 })
+
+test('a note that is not first in its message still names the list', async ($, on) => {
+  const writes = world(on, 'new', [said('user', `<system-reminder>files re-read</system-reminder>\n${note('old')}\nnext question`)], {
+    [`${dir}/old.md`]: LIST,
+  })
+  await begin($)
+
+  expect(writes[`${dir}/new.md`]).toBe(LIST)
+})
+
+test("with no note, Claude's own edits of the list name it", async ($, on) => {
+  const edited = {
+    role: 'assistant',
+    text: '',
+    toolUses: [{ tool_use_id: 't1', tool: 'Edit', input: { file_path: `${dir}/old.md`, old_string: 'a', new_string: 'b' } }],
+  }
+  const writes = world(on, 'new', [said('user', 'hello'), edited, said('user', 'go on')], { [`${dir}/old.md`]: LIST })
+  await begin($)
+
+  expect(writes[`${dir}/new.md`]).toBe(LIST)
+  expect(writes[`${dir}/new.on`]).toBe('on\n')
+})
+
+test('a file read or a file elsewhere is not taken as the list', async ($, on) => {
+  const touched = {
+    role: 'assistant',
+    text: '',
+    toolUses: [
+      { tool_use_id: 't1', tool: 'Read', input: { file_path: `${dir}/old.md` } },
+      { tool_use_id: 't2', tool: 'Write', input: { file_path: '/home/u/notes/old.md', content: 'x' } },
+    ],
+  }
+  const writes = world(on, 'new', [touched], { [`${dir}/old.md`]: LIST })
+  await begin($)
+
+  expect(Object.keys(writes).length).toBe(0)
+})

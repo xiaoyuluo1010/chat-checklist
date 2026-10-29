@@ -338,23 +338,43 @@ async function isOn($: any): Promise<boolean> {
   }
 }
 
-// A chat resumed under a new session id keeps its transcript, and with it the rules note
-// a session appends at start, which names that session's list file. The newest such note
-// names the list this chat used last; if it is not this session's own, copy it over.
-const NOTE = /^Chat Checklist: this chat has a running next-step list at (\S+\.md)\./
+// A chat resumed under a new session id keeps its transcript, and with it two traces of the
+// list it used: the rules note a session appends at start (stored as a meta message, which the
+// transcript rows may leave out, and not always first in its message), and Claude's own Edit and
+// Write calls on the list file. The newest trace names the list this chat used last; if it is
+// not this session's own, copy it over.
+const NOTE = /Chat Checklist: this chat has a running next-step list at (\S+\.md)\./g
+const LIST_FILE = /\/\.claude\/chat-checklists\/[^/\s]+\.md$/
+
+// The list file a message names, newest trace in it first.
+function traceOf(m: any): string | undefined {
+  if (m.role === 'assistant') {
+    const uses = Array.isArray(m.toolUses) ? m.toolUses : []
+    for (let k = uses.length - 1; k >= 0; k--) {
+      const path = uses[k]?.input?.file_path
+      if ((uses[k].tool === 'Edit' || uses[k].tool === 'Write') && typeof path === 'string' && LIST_FILE.test(path)) {
+        return path
+      }
+    }
+
+    return undefined
+  }
+  const hits = [...(m.text ?? '').matchAll(NOTE)]
+
+  return hits.length > 0 ? hits[hits.length - 1][1] : undefined
+}
 
 async function inherit($: any): Promise<boolean> {
   const file = await pathOf($)
   const found = await $.session.messages()
   if (!Array.isArray(found)) return false
   for (let i = found.length - 1; i >= 0; i--) {
-    const m = found[i]
-    const hit = m.role === 'user' ? NOTE.exec((m.text ?? '').trim()) : null
-    if (!hit) continue
-    if (hit[1] === file) return false
+    const from = traceOf(found[i])
+    if (!from) continue
+    if (from === file) return false
     try {
-      const src = await $.fs.read(hit[1])
-      const marked = await $.fs.read(hit[1].replace(/\.md$/, '.on')).then(() => true, () => false)
+      const src = await $.fs.read(from)
+      const marked = await $.fs.read(from.replace(/\.md$/, '.on')).then(() => true, () => false)
       if (!marked && !src.split('\n').some((l: string) => TASK.test(l))) return false
       await $.fs.write(file, src)
       await markOn($)

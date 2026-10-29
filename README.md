@@ -26,7 +26,7 @@ Installing the mod changes nothing by itself. In a chat where you want a checkli
 
 That creates the chat's list and starts it. Chats where you do not do this stay untouched: no list, no band above the prompt, no messages. Typing the command again later opens the pane. Once on, a chat stays on across restarts and rewinds, even if its list is still empty: the command leaves a small marker file next to the list.
 
-Lists are tied to the chat's session id, and reopening an old chat sometimes gives it a new id. The mod then finds the list the chat used last (its file is named in the chat's own history) and copies it over, so the list carries on. If it cannot (for example after the history was compacted), run the command again and Claude rebuilds the first list from the conversation (see below).
+Lists are tied to the chat's session id, and reopening an old chat sometimes gives it a new id. The mod then finds the list the chat used last (from the chat's own history: the note naming the list, or Claude's own edits of the list file) and copies it over, so the list carries on. If it cannot (for example after the history was compacted), run the command again and Claude rebuilds the first list from the conversation (see below).
 
 ## What you see
 
