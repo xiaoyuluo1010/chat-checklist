@@ -8,8 +8,6 @@ declare module 'claude-code' {
       undo: Shaped<string[]>
       redo: Shaped<string[]>
       changes: Shaped<string[]>
-      undoWhat: Shaped<string[]>
-      redoWhat: Shaped<string[]>
       seen: Shaped<string>
     }
   }

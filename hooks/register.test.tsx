@@ -258,7 +258,7 @@ test('a change made in the pane reaches Claude once, with the next prompt', asyn
   const done = await pane.find({ type: 'Markdown', text: /↺/ } as any)
   await pane.press({ key: (done as any).key, link: tick })
   const undoTip = await pane.find({ type: 'Text', text: /^Undo: / })
-  expect(undoTip?.text).toBe('Undo: reopened "Load the data" (was done)')
+  expect(undoTip?.text).toBe('Undo: tick "Load the data"')
   await pane.unmount()
 
   await $.prompt.submit({ text: 'go on' })
@@ -283,7 +283,7 @@ test('a change undone before Claude hears of it is not reported', async ($, on) 
   const done = await pane.find({ type: 'Markdown', text: /↺/ } as any)
   await pane.press({ key: (done as any).key, link: tick })
   await pane.press({ key: 'undo', link: { href: 'https://chat-checklist.invalid/undo' } })
-  expect((await pane.find({ type: 'Text', text: /^Redo: / }))?.text).toBe('Redo: reopened "Load the data" (was done)')
+  expect((await pane.find({ type: 'Text', text: /^Redo: / }))?.text).toBe('Redo: mark "Load the data" not started')
   await pane.unmount()
 
   await $.prompt.submit({ text: 'go on' })

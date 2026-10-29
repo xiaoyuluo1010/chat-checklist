@@ -54,7 +54,7 @@ Sub-steps use the same three marks. The desktop app, the editor and mobile draw 
 - Click a done or not-started title to expand its sub-steps and notes. The item in progress is always expanded.
 - Hover an item to get `⧉ ✓ ▲ ▼ ✕` (copy, tick, move up, move down, remove). On a done item the tick is `↺`, which reopens it. Remove asks for confirmation.
 - `⧉` copies the item with its sub-steps and notes as plain text; `⧉ Copy all` at the top copies the whole list. The pane's text cannot be selected with the mouse (the app draws it natively), so these are the way to copy.
-- `↶ Undo` / `↷ Redo` at the top step back and forward through your edits and Claude's edits (last 30). Hover either one to see what it will undo or redo.
+- `↶ Undo` / `↷ Redo` at the top step back and forward through your edits and Claude's edits (last 30). Hover either one to see exactly what it will change, e.g. `Undo: tick "Draft the figure"`.
 - The bottom label shows the chat's state: **Ongoing**, **Done**, **Parked**, **Archive**.
 
 ## Who edits what

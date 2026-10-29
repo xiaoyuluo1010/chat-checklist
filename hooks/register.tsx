@@ -30,20 +30,11 @@ const redo = atom({ plugin: 'chat-checklist', key: 'redo' } as const, [] as stri
   shape: 'redo-1',
 })
 const HISTORY = 30
-// What each undo and redo step does, beside its snapshot, for the hover label.
-const undoWhat = atom({ plugin: 'chat-checklist', key: 'undoWhat' } as const, [] as string[], {
-  shape: 'undoWhat-1',
-})
-const redoWhat = atom({ plugin: 'chat-checklist', key: 'redoWhat' } as const, [] as string[], {
-  shape: 'redoWhat-1',
-})
 
-// Puts a snapshot on the undo stack with what it undoes; a new change clears redo.
-async function pushUndo($: any, snap: string, what: string): Promise<void> {
+// Puts a snapshot on the undo stack; a new change clears redo.
+async function pushUndo($: any, snap: string): Promise<void> {
   await update($, undo, l => [...l, snap].slice(-HISTORY))
-  await update($, undoWhat, l => [...l, what].slice(-HISTORY))
   await update($, redo, () => [])
-  await update($, redoWhat, () => [])
 }
 
 // What the person changed in the pane since Claude last heard, and the list as Claude last knew it.
@@ -137,6 +128,39 @@ const parse = (src: string): Item[] => {
   })
 
   return items
+}
+
+const MARK_WORD: Record<Mark, string> = { open: 'not started', doing: 'in progress', done: 'done', dropped: 'set aside' }
+const quote = (b: string): string => `"${clip(b, 30)}"`
+
+// What going from one version of the list to another does, in a few words: the item changes first,
+// then moves and note edits. Used for the Undo and Redo labels and for the note to Claude.
+function describe(from: string, to: string): string {
+  const a = parse(from)
+  const b = parse(to)
+  const was = new Map(a.map(it => [it.body, it]))
+  const now = new Map(b.map(it => [it.body, it]))
+  const out: string[] = []
+  for (const it of b) {
+    const old = was.get(it.body)
+    if (!old) out.push(`add ${quote(it.body)}`)
+    else if (old.mark !== it.mark)
+      out.push(it.mark === 'done' ? `tick ${quote(it.body)}` : `mark ${quote(it.body)} ${MARK_WORD[it.mark]}`)
+    else if (old.details.join('\n') !== it.details.join('\n')) out.push(`change the notes of ${quote(it.body)}`)
+  }
+  for (const it of a) if (!now.has(it.body)) out.push(`remove ${quote(it.body)}`)
+  if (out.length === 0) {
+    const kept = a.filter(it => now.has(it.body))
+    const moved = kept.filter(it => b.findIndex(x => x.body === it.body) !== kept.indexOf(it))
+    if (moved.length > 0) out.push(`move ${quote(moved[0].body)}`)
+  }
+  if (out.length === 0) {
+    const st = parseStatus(to).state
+    if (st !== parseStatus(from).state) out.push(st === 'active' ? 'clear the chat status' : `set the chat status to ${st}`)
+  }
+  if (out.length === 0) return 'a formatting change'
+
+  return out.length > 3 ? `${out.slice(0, 3).join('; ')}; and ${out.length - 3} more` : out.join('; ')
 }
 
 // "status: done", "status: park waiting for new data" or "status: archive"; absent means ongoing.
@@ -321,7 +345,7 @@ async function load($: any): Promise<void> {
   const cur = await read($, text)
   if (cur !== src) {
     // A change made outside the list (Claude's edit) is one undo step too.
-    if (cur) await pushUndo($, cur, "Claude's last update to the list")
+    if (cur) await pushUndo($, cur)
     await update($, text, () => src)
   }
 }
@@ -359,15 +383,12 @@ async function stepUndo($: any): Promise<void> {
   const stack = await read($, undo)
   if (stack.length === 0) return
   const prev = stack[stack.length - 1]
-  const what = (await read($, undoWhat)).slice(-1)[0] ?? 'the last change'
   const file = await pathOf($)
   const cur = await $.fs.read(file)
   await $.fs.write(file, prev)
-  await noteChange($, cur, `undid: ${what}`)
+  await noteChange($, cur, `undo: ${describe(cur, prev)}`)
   await update($, undo, l => l.slice(0, -1))
-  await update($, undoWhat, l => l.slice(0, -1))
   await update($, redo, l => [...l, cur].slice(-HISTORY))
-  await update($, redoWhat, l => [...l, what].slice(-HISTORY))
   await update($, text, () => prev)
 }
 
@@ -375,15 +396,12 @@ async function stepRedo($: any): Promise<void> {
   const stack = await read($, redo)
   if (stack.length === 0) return
   const next = stack[stack.length - 1]
-  const what = (await read($, redoWhat)).slice(-1)[0] ?? 'the last undone change'
   const file = await pathOf($)
   const cur = await $.fs.read(file)
   await $.fs.write(file, next)
-  await noteChange($, cur, `redid: ${what}`)
+  await noteChange($, cur, `redo: ${describe(cur, next)}`)
   await update($, redo, l => l.slice(0, -1))
-  await update($, redoWhat, l => l.slice(0, -1))
   await update($, undo, l => [...l, cur].slice(-HISTORY))
-  await update($, undoWhat, l => [...l, what].slice(-HISTORY))
   await update($, text, () => next)
 }
 
@@ -397,7 +415,7 @@ async function edit($: any, what: string, change: (lines: string[]) => string[] 
   if (src === before) return
   await $.fs.write(file, src)
   await noteChange($, before, what)
-  await pushUndo($, before, what)
+  await pushUndo($, before)
   await update($, text, () => src)
 }
 
@@ -621,8 +639,8 @@ export const register: Register = on => {
     const room = Math.max(12, (e.props.bodyColumns ?? 40) - 10)
     const canUndo = (await read($, undo)).length > 0
     const canRedo = (await read($, redo)).length > 0
-    const undoTip = (await read($, undoWhat)).slice(-1)[0]
-    const redoTip = (await read($, redoWhat)).slice(-1)[0]
+    const undoTip = canUndo ? describe(src, (await read($, undo)).slice(-1)[0]) : ''
+    const redoTip = canRedo ? describe(src, (await read($, redo)).slice(-1)[0]) : ''
 
     // A label that floats under the button while the pointer is on it.
     const tip = (k: string, said: string | undefined) =>
@@ -706,7 +724,7 @@ export const register: Register = on => {
               text={canUndo ? '[**↶ Undo**](https://chat-checklist.invalid/undo)' : '**↶ Undo**'}
               onLinkPress={() => void stepUndo($)}
             />
-            {canUndo && tip('undo', `Undo: ${undoTip ?? 'the last change'}`)}
+            {canUndo && tip('undo', `Undo: ${undoTip}`)}
           </Box>
           <Box key="redoAt">
             <Markdown
@@ -715,7 +733,7 @@ export const register: Register = on => {
               text={canRedo ? '[**↷ Redo**](https://chat-checklist.invalid/redo)' : '**↷ Redo**'}
               onLinkPress={() => void stepRedo($)}
             />
-            {canRedo && tip('redo', `Redo: ${redoTip ?? 'the last undone change'}`)}
+            {canRedo && tip('redo', `Redo: ${redoTip}`)}
           </Box>
           {items.length > 0 && (
             <Markdown
