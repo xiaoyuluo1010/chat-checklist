@@ -99,3 +99,41 @@ test('a list this session already has is kept as it is', async ($, on) => {
 
   expect(writes[`${dir}/new.md`]).toBeUndefined()
 })
+
+const EMPTY = '# Chat Checklist\n<!-- header -->\n'
+
+test('a marked chat stays on with a list that has no items', async ($, on) => {
+  const session = mock.session(on)
+  world(on, 'm', [], { [`${dir}/m.md`]: EMPTY, [`${dir}/m.on`]: 'on\n' })
+  await begin($)
+
+  expect(session.appended().length).toBe(1)
+})
+
+test('a marked chat stays on when its list file is gone', async ($, on) => {
+  const session = mock.session(on)
+  const writes = world(on, 'm', [], { [`${dir}/m.on`]: 'on\n' })
+  await begin($)
+
+  expect(session.appended().length).toBe(1)
+  expect(writes[`${dir}/m.md`]).toContain("# Chat Checklist")
+})
+
+test('an empty list without a marker stays off', async ($, on) => {
+  const session = mock.session(on)
+  world(on, 'm', [], { [`${dir}/m.md`]: EMPTY })
+  await begin($)
+
+  expect(session.appended().length).toBe(0)
+})
+
+test('a marked empty list is carried over with its marker', async ($, on) => {
+  const writes = world(on, 'new', [said('user', note('old'))], {
+    [`${dir}/old.md`]: EMPTY,
+    [`${dir}/old.on`]: 'on\n',
+  })
+  await begin($)
+
+  expect(writes[`${dir}/new.md`]).toBe(EMPTY)
+  expect(writes[`${dir}/new.on`]).toBe('on\n')
+})

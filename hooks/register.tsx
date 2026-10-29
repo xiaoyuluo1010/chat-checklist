@@ -207,6 +207,16 @@ async function pathOf($: any): Promise<string> {
   return `${home}/.claude/chat-checklists/${id}.md`
 }
 
+// A small marker beside the list, written only by /chat-checklist (or a carry-over). It keeps a chat
+// on when the list file is rewound, deleted or still has no items; Claude never edits it.
+async function onPathOf($: any): Promise<string> {
+  return (await pathOf($)).replace(/\.md$/, '.on')
+}
+
+async function markOn($: any): Promise<void> {
+  await $.fs.write(await onPathOf($), 'on\n')
+}
+
 async function load($: any): Promise<void> {
   const file = await pathOf($)
   let src: string
@@ -289,9 +299,14 @@ let registered = false
 let running = false
 let tries = 0
 
-// The list is opt-in per chat: it runs only where a list with items already exists,
-// or after /chat-checklist. A header-only file counts as off.
+// The list is opt-in per chat: it runs where /chat-checklist left its marker, or where a list
+// with items already exists. A header-only file with no marker (old auto-on versions) counts as off.
 async function isOn($: any): Promise<boolean> {
+  try {
+    await $.fs.read(await onPathOf($))
+
+    return true
+  } catch {}
   try {
     return (await $.fs.read(await pathOf($))).split('\n').some((l: string) => TASK.test(l))
   } catch {
@@ -315,8 +330,10 @@ async function inherit($: any): Promise<boolean> {
     if (hit[1] === file) return false
     try {
       const src = await $.fs.read(hit[1])
-      if (!src.split('\n').some((l: string) => TASK.test(l))) return false
+      const marked = await $.fs.read(hit[1].replace(/\.md$/, '.on')).then(() => true, () => false)
+      if (!marked && !src.split('\n').some((l: string) => TASK.test(l))) return false
       await $.fs.write(file, src)
+      await markOn($)
 
       return true
     } catch {
@@ -375,6 +392,7 @@ export const register: Register = on => {
       return { text: `Chat Checklist pane opened. List file: ${await pathOf($)}` }
     }
     await $.fs.write(await pathOf($), HEADER)
+    await markOn($)
     await start($)
 
     return { text: 'Chat Checklist is on for this chat. Claude will keep its list; the next step shows above the prompt.' }
