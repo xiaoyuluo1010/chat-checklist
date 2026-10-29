@@ -4,6 +4,18 @@ A Claude Code mod that helps record and track the workflow of each chat. It give
 
 Claude writes and updates the list by itself while it works. You read it at a glance, tick things, reorder, and remove, without re-reading long replies to find out what comes next.
 
+## Install
+
+In Claude Code (2.1.275 or later):
+
+```
+/plugin install chat-checklist --marketplace xiaoyuluo1010/chat-checklist
+```
+
+Answer `y` to add the marketplace, then choose a scope. Restart the chat to load it.
+
+If you only want to try it in one chat, copy this folder to `~/.claude/dev-mods/<session id>/chat-checklist/` and answer **Turn them on** when asked. A mod copied this way belongs to that one chat; each chat needs its own copy.
+
 ## Turn it on, per chat
 
 Installing the mod changes nothing by itself. In a chat where you want a checklist, type:
@@ -12,7 +24,7 @@ Installing the mod changes nothing by itself. In a chat where you want a checkli
 /chat-checklist
 ```
 
-That creates the chat's list and starts it. Chats where you do not do this stay untouched: no list, no band above the prompt, no messages. Typing the command again later opens the pane. A list file with no items yet counts as off, so a chat you enabled but never used stays quiet after a restart.
+That creates the chat's list and starts it. Chats where you do not do this stay untouched: no list, no band above the prompt, no messages. Typing the command again later opens the pane. Once on, a chat stays on across restarts and rewinds, even if its list is still empty: the command leaves a small marker file next to the list.
 
 Lists are tied to the chat's session id, and reopening an old chat sometimes gives it a new id. The mod then finds the list the chat used last (its file is named in the chat's own history) and copies it over, so the list carries on. If it cannot (for example after the history was compacted), run the command again and Claude rebuilds the first list from the conversation (see below).
 
@@ -62,18 +74,6 @@ These are injected into the chat automatically (you do not need to paste anythin
 - **No history log.** The list is a plan, not a record. If your project already keeps handoff notes, the list only points to them.
 
 Full text of the rules: `rulesOf` in `hooks/register.tsx`.
-
-## Install
-
-In a Claude Code terminal session:
-
-```
-/plugin install chat-checklist --marketplace <owner>/<repo>
-```
-
-Answer `y` to add the marketplace, then choose a scope.
-
-If you only want to try it in one chat, copy this folder to `~/.claude/dev-mods/<session id>/chat-checklist/` and answer **Turn them on** when asked. A mod copied this way belongs to that one chat; each chat needs its own copy.
 
 ## Adding it to a chat already in progress
 
