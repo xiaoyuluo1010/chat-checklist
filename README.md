@@ -33,7 +33,7 @@ Lists are tied to the chat's session id, and reopening an old chat sometimes giv
 **1. A one-line band above the prompt** (always visible)
 
 ```
-○ Next: <the item we are on> · 3 left · open list ›
+○ Ongoing: <the item we are on> · 3 left · open list ›
 ```
 
 The ring is green, like the item in progress in the list. Right after `/chat-checklist`, before Claude has written anything, the band reads `○ Chat Checklist is on · waiting for the first step`.

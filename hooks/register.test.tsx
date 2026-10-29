@@ -161,7 +161,7 @@ test('the pane and the band draw their marks on every surface', async ($, on) =>
     await pane.unmount()
 
     const band = await $.ui.mount({ plugin: 'chat-checklist', component: 'AbovePrompt', surface, props: {} } as any)
-    expect((await band.find({ type: 'Text', text: /Next: Fix the batch effect/ }))?.text).toContain('2 left')
+    expect((await band.find({ type: 'Text', text: /Ongoing: Fix the batch effect/ }))?.text).toContain('2 left')
     await band.unmount()
   }
 })

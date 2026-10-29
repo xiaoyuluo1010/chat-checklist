@@ -634,7 +634,7 @@ export const register: Register = on => {
       <Box flexDirection="row" alignItems="center" gap={1}>
         {up ? markOf$(ui, 'now', 14) : null}
         {up ? (
-          <Text color={GRAY}>Next: {up.body} · {open} left ·</Text>
+          <Text color={GRAY}>Ongoing: {up.body} · {open} left ·</Text>
         ) : (
           <Text color={mark.color}>
             {mark.glyph} All done · {mark.label} ·{' '}
