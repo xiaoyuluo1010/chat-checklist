@@ -30,11 +30,29 @@ const redo = atom({ plugin: 'chat-checklist', key: 'redo' } as const, [] as stri
   shape: 'redo-1',
 })
 const HISTORY = 30
+// The short name of each undo and redo step (tick, reopen, reorder, delete), beside its snapshot.
+const undoAct = atom({ plugin: 'chat-checklist', key: 'undoAct' } as const, [] as string[], {
+  shape: 'undoAct-1',
+})
+const redoAct = atom({ plugin: 'chat-checklist', key: 'redoAct' } as const, [] as string[], {
+  shape: 'redoAct-1',
+})
 
-// Puts a snapshot on the undo stack; a new change clears redo.
-async function pushUndo($: any, snap: string): Promise<void> {
+// Puts the person's step on the undo stack; a new step clears redo.
+async function pushUndo($: any, snap: string, act: string): Promise<void> {
   await update($, undo, l => [...l, snap].slice(-HISTORY))
+  await update($, undoAct, l => [...l, act].slice(-HISTORY))
   await update($, redo, () => [])
+  await update($, redoAct, () => [])
+}
+
+// Undo and redo are the person's own quick take-backs. Once Claude edits the list, the snapshots
+// would also roll back Claude's edit, so the history starts over.
+async function dropHistory($: any): Promise<void> {
+  await update($, undo, () => [])
+  await update($, undoAct, () => [])
+  await update($, redo, () => [])
+  await update($, redoAct, () => [])
 }
 
 // What the person changed in the pane since Claude last heard, and the list as Claude last knew it.
@@ -52,6 +70,10 @@ const GRAY = '#a8a8a8'
 // State glyphs: a blue tick for done, a green ring for what we are on, a gray ring for not started.
 const DONE_BLUE = '#4a90d9'
 const NOW_GREEN = '#4caf6e'
+// The Undo / Redo hover board: half-clear white, a light edge, gray words.
+const TIP_BG = 'rgba(255, 255, 255, 0.85)'
+const TIP_EDGE = '#dddddd'
+const TIP_TEXT = '#8a8a8a'
 
 type Kind = 'done' | 'now' | 'open'
 
@@ -344,8 +366,7 @@ async function load($: any): Promise<void> {
   }
   const cur = await read($, text)
   if (cur !== src) {
-    // A change made outside the list (Claude's edit) is one undo step too.
-    if (cur) await pushUndo($, cur)
+    if (cur) await dropHistory($)
     await update($, text, () => src)
   }
 }
@@ -387,8 +408,11 @@ async function stepUndo($: any): Promise<void> {
   const cur = await $.fs.read(file)
   await $.fs.write(file, prev)
   await noteChange($, cur, `undo: ${describe(cur, prev)}`)
+  const act = (await read($, undoAct)).slice(-1)[0] ?? 'change'
   await update($, undo, l => l.slice(0, -1))
+  await update($, undoAct, l => l.slice(0, -1))
   await update($, redo, l => [...l, cur].slice(-HISTORY))
+  await update($, redoAct, l => [...l, act].slice(-HISTORY))
   await update($, text, () => prev)
 }
 
@@ -400,13 +424,16 @@ async function stepRedo($: any): Promise<void> {
   const cur = await $.fs.read(file)
   await $.fs.write(file, next)
   await noteChange($, cur, `redo: ${describe(cur, next)}`)
+  const act = (await read($, redoAct)).slice(-1)[0] ?? 'change'
   await update($, redo, l => l.slice(0, -1))
+  await update($, redoAct, l => l.slice(0, -1))
   await update($, undo, l => [...l, cur].slice(-HISTORY))
+  await update($, undoAct, l => [...l, act].slice(-HISTORY))
   await update($, text, () => next)
 }
 
 // Re-reads the file, applies one edit of the person's to its lines, writes it back.
-async function edit($: any, what: string, change: (lines: string[]) => string[] | undefined): Promise<void> {
+async function edit($: any, act: string, what: string, change: (lines: string[]) => string[] | undefined): Promise<void> {
   const file = await pathOf($)
   const before = await $.fs.read(file)
   const out = change(before.split('\n'))
@@ -415,7 +442,7 @@ async function edit($: any, what: string, change: (lines: string[]) => string[] 
   if (src === before) return
   await $.fs.write(file, src)
   await noteChange($, before, what)
-  await pushUndo($, before)
+  await pushUndo($, before, act)
   await update($, text, () => src)
 }
 
@@ -639,14 +666,24 @@ export const register: Register = on => {
     const room = Math.max(12, (e.props.bodyColumns ?? 40) - 10)
     const canUndo = (await read($, undo)).length > 0
     const canRedo = (await read($, redo)).length > 0
-    const undoTip = canUndo ? describe(src, (await read($, undo)).slice(-1)[0]) : ''
-    const redoTip = canRedo ? describe(src, (await read($, redo)).slice(-1)[0]) : ''
+    const undoTip = (await read($, undoAct)).slice(-1)[0] ?? 'change'
+    const redoTip = (await read($, redoAct)).slice(-1)[0] ?? 'change'
 
     // A label that floats under the button while the pointer is on it.
     const tip = (k: string, said: string | undefined) =>
       said ? (
-        <Box position="absolute" top={1} left={0} display="none" hover={{ display: 'flex' }} backgroundColor="text" paddingX={1}>
-          <Text color="inverseText">{said}</Text>
+        <Box
+          position="absolute"
+          top={1}
+          left={0}
+          display="none"
+          hover={{ display: 'flex' }}
+          backgroundColor={TIP_BG}
+          borderStyle="round"
+          borderColor={TIP_EDGE}
+          paddingX={1}
+        >
+          <Text color={TIP_TEXT}>{said}</Text>
         </Box>
       ) : null
 
@@ -676,9 +713,9 @@ export const register: Register = on => {
           onLinkPress={link => {
             if (link.href.endsWith('/copy')) void copyText($, plainOf(src.split('\n'), body))
             else if (link.href.endsWith('/tick'))
-              void edit($, isDone ? `reopened "${body}" (was done)` : `marked "${body}" done`, lines => toggleLines(lines, body))
-            else if (link.href.endsWith('/up')) void edit($, `moved "${body}" up`, lines => moveLines(lines, body, -1))
-            else if (link.href.endsWith('/down')) void edit($, `moved "${body}" down`, lines => moveLines(lines, body, 1))
+              void edit($, isDone ? 'reopen' : 'tick', isDone ? `reopened "${body}" (was done)` : `marked "${body}" done`, lines => toggleLines(lines, body))
+            else if (link.href.endsWith('/up')) void edit($, 'reorder', `moved "${body}" up`, lines => moveLines(lines, body, -1))
+            else if (link.href.endsWith('/down')) void edit($, 'reorder', `moved "${body}" down`, lines => moveLines(lines, body, 1))
             else void update($, pending, () => body)
           }}
         />
@@ -693,7 +730,7 @@ export const register: Register = on => {
           key={`y${k}`}
           plain
           onPress={async () => {
-            await edit($, `removed "${body}" with its sub-items and notes`, lines => removeLines(lines, body))
+            await edit($, 'delete', `removed "${body}" with its sub-items and notes`, lines => removeLines(lines, body))
             await update($, pending, () => '')
           }}
         >
@@ -724,7 +761,7 @@ export const register: Register = on => {
               text={canUndo ? '[**↶ Undo**](https://chat-checklist.invalid/undo)' : '**↶ Undo**'}
               onLinkPress={() => void stepUndo($)}
             />
-            {canUndo && tip('undo', `Undo: ${undoTip}`)}
+            {canUndo && tip('undo', `Undo ${undoTip}`)}
           </Box>
           <Box key="redoAt">
             <Markdown
@@ -733,7 +770,7 @@ export const register: Register = on => {
               text={canRedo ? '[**↷ Redo**](https://chat-checklist.invalid/redo)' : '**↷ Redo**'}
               onLinkPress={() => void stepRedo($)}
             />
-            {canRedo && tip('redo', `Redo: ${redoTip}`)}
+            {canRedo && tip('redo', `Redo ${redoTip}`)}
           </Box>
           {items.length > 0 && (
             <Markdown
