@@ -1,5 +1,6 @@
 {
   "name": "chat-checklist",
+  "description": "chat-checklist: a per-chat checklist of next steps for Claude Code, kept by Claude and shown in a pane and a band above the prompt.",
   "owner": {
     "name": "xiaoyuluo1010"
   },

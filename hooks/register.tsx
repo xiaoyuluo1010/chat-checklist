@@ -380,7 +380,8 @@ export const register: Register = on => {
 
   // A mod loaded mid-session never sees session.start, so the next prompt starts it.
   on('prompt.submit', async ($, e, next) => {
-    await ensure($)
+    // A failure here must never hold up the person's prompt.
+    await ensure($).catch(() => {})
 
     return next(e)
   })
