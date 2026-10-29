@@ -137,3 +137,31 @@ test('a marked empty list is carried over with its marker', async ($, on) => {
   expect(writes[`${dir}/new.md`]).toBe(EMPTY)
   expect(writes[`${dir}/new.on`]).toBe('on\n')
 })
+
+const SHOWN = '# Chat Checklist\n<!-- header -->\n- [x] Load the data\n- [~] Fix the batch effect\n  - [x] Check PCA\n  - [ ] Rerun\n- [ ] Draft the figure\n'
+const surfaces = ['terminal', 'desktop', 'vscode', 'mobile'] as const
+
+test('the pane and the band draw their marks on every surface', async ($, on) => {
+  world(on, 'v', [], { [`${dir}/v.md`]: SHOWN, [`${dir}/v.on`]: 'on\n' })
+  on('ui.panes', () => ({ value: [] }))
+  await begin($)
+
+  for (const surface of surfaces) {
+    const pane = await $.ui.mount({
+      plugin: 'chat-checklist',
+      component: 'Pane',
+      requestId: 'chat-checklist',
+      surface,
+      props: { title: 'Chat Checklist', isFocused: false, bodyColumns: 40, placement: 'dock', scroll: { offset: 0, bodyRows: 20 }, view: {} },
+    } as any)
+    expect((await pane.find({ type: 'Text', text: /Fix the batch effect/ }))?.text).toBe('Fix the batch effect')
+    const drawn = await pane.find({ type: 'Svg' } as any)
+    if (surface === 'terminal') expect(drawn).toBeUndefined()
+    else expect(drawn).toBeDefined()
+    await pane.unmount()
+
+    const band = await $.ui.mount({ plugin: 'chat-checklist', component: 'AbovePrompt', surface, props: {} } as any)
+    expect((await band.find({ type: 'Text', text: /Next: Fix the batch effect/ }))?.text).toContain('2 left')
+    await band.unmount()
+  }
+})

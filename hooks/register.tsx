@@ -39,6 +39,27 @@ const GRAY = '#a8a8a8'
 const DONE_BLUE = '#4a90d9'
 const NOW_GREEN = '#4caf6e'
 
+type Kind = 'done' | 'now' | 'open'
+
+const MARK_SVG: Record<Kind, string> = {
+  done: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><circle cx="10" cy="10" r="9" fill="${DONE_BLUE}"/><path d="M5.8 10.2l2.8 2.9 5.6-6" stroke="#fff" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+  now: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7.4" fill="none" stroke="${NOW_GREEN}" stroke-width="3.2"/></svg>`,
+  open: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7.6" fill="none" stroke="${GRAY}" stroke-width="2.2"/></svg>`,
+}
+const MARK_ALT: Record<Kind, string> = { done: 'done', now: 'in progress', open: 'not started' }
+
+// The state mark as a small drawing where the surface has Svg (desktop, editor, mobile), else a glyph.
+const markOf$ = (ui: any, kind: Kind, size: number) =>
+  ui.Svg ? (
+    <ui.Svg source={MARK_SVG[kind]} alt={MARK_ALT[kind]} width={size} height={size} />
+  ) : kind === 'done' ? (
+    <ui.Text bold color={DONE_BLUE}>✔</ui.Text>
+  ) : kind === 'now' ? (
+    <ui.Text bold color={NOW_GREEN}>○</ui.Text>
+  ) : (
+    <ui.Text color={GRAY}>○</ui.Text>
+  )
+
 const STATE_MARK = {
   active: { glyph: '○', color: '#4caf6e', label: 'Ongoing' },
   ask: { glyph: '◌', color: GRAY, label: 'Decide: done / park / archive?' },
@@ -411,28 +432,28 @@ export const register: Register = on => {
     // Turned on but no items yet: say so, so the person knows it is on.
     if (tops.length === 0) {
       if (!(await isOn($))) return next(e)
-      const { Text } = $.ui.resolve(e)
+      const ui = $.ui.resolve(e)
+      const { Box, Text } = ui
 
       return (
-        <Text>
-          <Text bold color={NOW_GREEN}>○</Text>
-          <Text color={GRAY}> Chat Checklist is on · waiting for the first step</Text>
-        </Text>
+        <Box flexDirection="row" alignItems="center" gap={1}>
+          {markOf$(ui, 'now', 14)}
+          <Text color={GRAY}>Chat Checklist is on · waiting for the first step</Text>
+        </Box>
       )
     }
 
-    const { Box, Button, Text } = $.ui.resolve(e)
+    const ui = $.ui.resolve(e)
+    const { Box, Button, Text } = ui
     const open = tops.filter(it => isLive(it.mark)).length
     const isOpen = (await $.ui.panes()).some(pane => pane.id === PANE)
     const mark = STATE_MARK[markKey(open, parseStatus(src).state)]
 
     return (
-      <Box>
+      <Box flexDirection="row" alignItems="center" gap={1}>
+        {up ? markOf$(ui, 'now', 14) : null}
         {up ? (
-          <Text>
-            <Text bold color={NOW_GREEN}>○</Text>
-            <Text color={GRAY}> Next: {up.body} · {open} left · </Text>
-          </Text>
+          <Text color={GRAY}>Next: {up.body} · {open} left ·</Text>
         ) : (
           <Text color={mark.color}>
             {mark.glyph} All done · {mark.label} ·{' '}
@@ -454,7 +475,8 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Text, Button, Markdown } = $.ui.resolve(e)
+    const ui = $.ui.resolve(e)
+    const { Box, Text, Button, Markdown } = ui
     const src = await read($, text)
     const items = parse(src)
     const older = await read($, showOlder)
@@ -574,17 +596,9 @@ export const register: Register = on => {
             <Box key={`w${it.line}`} flexDirection="column" rowGap={1}>
               {isNow && hasPrev && dots}
               <Box key={`r${it.line}`} flexDirection="column">
-                <Box flexDirection="row" gap={1}>
-                  {/* Plain text, not a button: the desktop app does not colour button text. Ticking is in the hover controls. */}
-                  <Box marginLeft={1}>
-                    {isDone ? (
-                      <Text bold color={DONE_BLUE}>✔</Text>
-                    ) : isBold ? (
-                      <Text bold color={NOW_GREEN}>○</Text>
-                    ) : (
-                      <Text color={GRAY}>○</Text>
-                    )}
-                  </Box>
+                <Box flexDirection="row" alignItems="center" gap={1}>
+                  {/* A drawing, not a button: a Button holds only text. Ticking is in the hover controls. */}
+                  <Box marginLeft={1}>{markOf$(ui, isDone ? 'done' : isBold ? 'now' : 'open', 16)}</Box>
                   <Box flexShrink={1}>
                     {isDropped ? (
                       <Text color={GRAY} strikethrough>
@@ -612,13 +626,15 @@ export const register: Register = on => {
                 {isOpened &&
                   g.subs.map((sub, si) => (
                     <Box key={`s${sub.line}`} flexDirection="column" marginLeft={5 + Math.max(0, sub.indent - 2)}>
-                      <Box flexDirection="row" gap={1}>
-                        {sub.mark === 'done' ? (
-                          <Text color={DONE_BLUE}>✔</Text>
-                        ) : sub.mark === 'doing' || (isNow && !subDoing && si === firstOpenSub) ? (
-                          <Text bold color={NOW_GREEN}>○</Text>
-                        ) : (
-                          <Text color={GRAY}>○</Text>
+                      <Box flexDirection="row" alignItems="center" gap={1}>
+                        {markOf$(
+                          ui,
+                          sub.mark === 'done'
+                            ? 'done'
+                            : sub.mark === 'doing' || (isNow && !subDoing && si === firstOpenSub)
+                              ? 'now'
+                              : 'open',
+                          12,
                         )}
                         <Box flexShrink={1}>
                           {sub.mark === 'done' ? (

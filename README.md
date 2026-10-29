@@ -49,7 +49,7 @@ Click `open list ›` to open the full list in a side pane, `close list ›` to 
 | Gray ring `○`, gray text | Not started |
 | Gray with a line through it | Set aside on purpose, kept for later |
 
-Sub-steps use the same three marks.
+Sub-steps use the same three marks. The desktop app, the editor and mobile draw them as small pictures (a filled blue circle with a white tick, a thick green ring, a thin gray ring); the terminal uses the text glyphs.
 
 - Click a done or not-started title to expand its sub-steps and notes. The item in progress is always expanded.
 - Hover a not-yet-done item to get `✓ ▲ ▼ ✕` (tick, move up, move down, remove). Remove asks for confirmation. Done items are locked from reordering and removal on purpose.
