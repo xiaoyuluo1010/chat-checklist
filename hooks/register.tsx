@@ -35,6 +35,9 @@ const HISTORY = 30
 const BLUE = '#6aa6e6'
 // Not started or set aside: a light gray. Done and now use the normal text color.
 const GRAY = '#a8a8a8'
+// State glyphs: a blue tick for done, a green ring for what we are on, a gray ring for not started.
+const DONE_BLUE = '#4a90d9'
+const NOW_GREEN = '#4caf6e'
 
 const STATE_MARK = {
   active: { glyph: '○', color: '#4caf6e', label: 'Ongoing' },
@@ -404,8 +407,18 @@ export const register: Register = on => {
     const src = await read($, text)
     const tops = parse(src).filter(it => it.indent === 0)
     const up = tops.find(it => isLive(it.mark))
-    if (e.props.hasSurvey || tops.length === 0) {
-      return next(e)
+    if (e.props.hasSurvey) return next(e)
+    // Turned on but no items yet: say so, so the person knows it is on.
+    if (tops.length === 0) {
+      if (!(await isOn($))) return next(e)
+      const { Text } = $.ui.resolve(e)
+
+      return (
+        <Text>
+          <Text bold color={NOW_GREEN}>○</Text>
+          <Text color={GRAY}> Chat Checklist is on · waiting for the first step</Text>
+        </Text>
+      )
     }
 
     const { Box, Button, Text } = $.ui.resolve(e)
@@ -416,8 +429,9 @@ export const register: Register = on => {
     return (
       <Box>
         {up ? (
-          <Text color={GRAY}>
-            ○ Next: {up.body} · {open} left ·{' '}
+          <Text>
+            <Text bold color={NOW_GREEN}>○</Text>
+            <Text color={GRAY}> Next: {up.body} · {open} left · </Text>
           </Text>
         ) : (
           <Text color={mark.color}>
@@ -472,9 +486,10 @@ export const register: Register = on => {
         <Markdown
           key={k}
           dimColor
-          text="[▲](https://chat-checklist.invalid/up) [▼](https://chat-checklist.invalid/down) [✕](https://chat-checklist.invalid/remove)"
+          text="[✓](https://chat-checklist.invalid/tick) [▲](https://chat-checklist.invalid/up) [▼](https://chat-checklist.invalid/down) [✕](https://chat-checklist.invalid/remove)"
           onLinkPress={link => {
-            if (link.href.endsWith('/up')) void edit($, lines => moveLines(lines, body, -1))
+            if (link.href.endsWith('/tick')) void edit($, lines => toggleLines(lines, body))
+            else if (link.href.endsWith('/up')) void edit($, lines => moveLines(lines, body, -1))
             else if (link.href.endsWith('/down')) void edit($, lines => moveLines(lines, body, 1))
             else void update($, pending, () => body)
           }}
@@ -560,23 +575,16 @@ export const register: Register = on => {
               {isNow && hasPrev && dots}
               <Box key={`r${it.line}`} flexDirection="column">
                 <Box flexDirection="row" gap={1}>
-                  {isDone ? (
-                    <Box marginLeft={1}>
-                      <Text>●</Text>
-                    </Box>
-                  ) : isDropped ? (
-                    <Box marginLeft={1}>
+                  {/* Plain text, not a button: the desktop app does not colour button text. Ticking is in the hover controls. */}
+                  <Box marginLeft={1}>
+                    {isDone ? (
+                      <Text bold color={DONE_BLUE}>✔</Text>
+                    ) : isBold ? (
+                      <Text bold color={NOW_GREEN}>○</Text>
+                    ) : (
                       <Text color={GRAY}>○</Text>
-                    </Box>
-                  ) : (
-                    <Button
-                      key={`c${it.line}`}
-                      plain
-                      onPress={() => edit($, lines => toggleLines(lines, it.body))}
-                    >
-                      ○
-                    </Button>
-                  )}
+                    )}
+                  </Box>
                   <Box flexShrink={1}>
                     {isDropped ? (
                       <Text color={GRAY} strikethrough>
@@ -605,7 +613,13 @@ export const register: Register = on => {
                   g.subs.map((sub, si) => (
                     <Box key={`s${sub.line}`} flexDirection="column" marginLeft={5 + Math.max(0, sub.indent - 2)}>
                       <Box flexDirection="row" gap={1}>
-                        <Text color={sub.mark === 'done' ? undefined : GRAY}>•</Text>
+                        {sub.mark === 'done' ? (
+                          <Text color={DONE_BLUE}>✔</Text>
+                        ) : sub.mark === 'doing' || (isNow && !subDoing && si === firstOpenSub) ? (
+                          <Text bold color={NOW_GREEN}>○</Text>
+                        ) : (
+                          <Text color={GRAY}>○</Text>
+                        )}
                         <Box flexShrink={1}>
                           {sub.mark === 'done' ? (
                             <Text>{sub.body}</Text>

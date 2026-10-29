@@ -36,20 +36,23 @@ Lists are tied to the chat's session id, and reopening an old chat sometimes giv
 ○ Next: <the item we are on> · 3 left · open list ›
 ```
 
+The ring is green, like the item in progress in the list. Right after `/chat-checklist`, before Claude has written anything, the band reads `○ Chat Checklist is on · waiting for the first step`.
+
 Click `open list ›` to open the full list in a side pane, `close list ›` to close it. The pane never opens on its own, so it will not get in your way.
 
 **2. The list pane**
 
 | Look | Meaning |
 |---|---|
-| Normal black, `●` | Done |
-| **Bold black** | In progress (what we are on now) |
-| Light gray, `○` | Not started |
+| Blue tick `✔`, normal text | Done |
+| Green ring `○`, **bold text** | In progress (what we are on now) |
+| Gray ring `○`, gray text | Not started |
 | Gray with a line through it | Set aside on purpose, kept for later |
 
+Sub-steps use the same three marks.
+
 - Click a done or not-started title to expand its sub-steps and notes. The item in progress is always expanded.
-- Hover a not-yet-done item to get `▲ ▼ ✕` (move up, move down, remove). Remove asks for confirmation.
-- Click the `○` checkbox on a top-level item to tick or untick it. Done items are locked from reordering and removal on purpose.
+- Hover a not-yet-done item to get `✓ ▲ ▼ ✕` (tick, move up, move down, remove). Remove asks for confirmation. Done items are locked from reordering and removal on purpose.
 - `↶ Undo` / `↷ Redo` at the top step back and forward through your edits and Claude's edits (last 30).
 - The bottom label shows the chat's state: **Ongoing**, **Done**, **Parked**, **Archive**.
 
