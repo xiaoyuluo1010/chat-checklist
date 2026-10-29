@@ -24,10 +24,10 @@ const pending = atom({ plugin: 'chat-checklist', key: 'pending' } as const, '', 
 
 // Snapshots of the whole file for undo and redo, newest last.
 const undo = atom({ plugin: 'chat-checklist', key: 'undo' } as const, [] as string[], {
-  shape: 'undo-1',
+  shape: 'undo-2',
 })
 const redo = atom({ plugin: 'chat-checklist', key: 'redo' } as const, [] as string[], {
-  shape: 'redo-1',
+  shape: 'redo-2',
 })
 const HISTORY = 30
 // The short name of each undo and redo step (tick, reopen, reorder, delete), beside its snapshot.
