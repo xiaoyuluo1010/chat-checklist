@@ -59,7 +59,13 @@ Sub-steps use the same three marks. The desktop app, the editor and mobile draw 
 
 ## Who edits what
 
-Both of you. Claude keeps the list current silently as part of normal work; you change it with the pane's buttons whenever you like. Your change is your decision, and Claude hears of it:
+**Let Claude keep the list; you read it and steer.** The list is meant to run itself:
+
+1. Tell Claude in the chat: new ideas, changes, "drop that", "do this first". Claude files them in the right place.
+2. For quick fixes the pane has a few one-click actions: copy, tick, move, remove.
+3. About 8 seconds after you click, Claude picks up your intent and confirms it, or asks if it conflicts with the plan.
+
+Your change is your decision, and Claude hears of it:
 
 - About 8 seconds after you stop clicking, Claude gets the details in the background. If Claude was idle, one short line such as `📋 moved "Draft the figure" up` appears in the chat and Claude answers it: not by repeating what you did, but by reacting to it (what it means for the plan, or a question when your intent is unclear).
 - If Claude is mid-reply, the note goes into that reply instead.
@@ -114,6 +120,9 @@ Each chat you turn it on for gets its own, initially empty list. If the chat alr
 Created by xiaoyuluo1010 (first version October 2026). The original repository, its commit history and its release tags are the record of authorship. If you fork or adapt it, the license requires you to keep `NOTICE` and to mark any file you changed as changed.
 
 ## Development
+
+The mod is meant to stay small and mostly automatic. Before adding a button for something, consider asking Claude to do it instead: editing an item's text, adding notes or restructuring the list are all one sentence in the chat. Add a control only for an action you do often and that is faster as one click.
+
 
 ```
 claude plugin validate .
