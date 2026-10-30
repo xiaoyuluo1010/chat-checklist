@@ -24,35 +24,34 @@ const pending = atom({ plugin: 'chat-checklist', key: 'pending' } as const, '', 
 
 // Snapshots of the whole file for undo and redo, newest last.
 const undo = atom({ plugin: 'chat-checklist', key: 'undo' } as const, [] as string[], {
-  shape: 'undo-2',
+  shape: 'undo-3',
 })
 const redo = atom({ plugin: 'chat-checklist', key: 'redo' } as const, [] as string[], {
-  shape: 'redo-2',
+  shape: 'redo-3',
 })
 const HISTORY = 30
-// The short name of each undo and redo step (tick, reopen, reorder, delete), beside its snapshot.
-const undoAct = atom({ plugin: 'chat-checklist', key: 'undoAct' } as const, [] as string[], {
-  shape: 'undoAct-1',
-})
-const redoAct = atom({ plugin: 'chat-checklist', key: 'redoAct' } as const, [] as string[], {
-  shape: 'redoAct-1',
-})
-
-// Puts the person's step on the undo stack; a new step clears redo.
-async function pushUndo($: any, snap: string, act: string): Promise<void> {
-  await update($, undo, l => [...l, snap].slice(-HISTORY))
-  await update($, undoAct, l => [...l, act].slice(-HISTORY))
-  await update($, redo, () => [])
-  await update($, redoAct, () => [])
+// Undo and redo are the person's quick take-backs of their own pane actions: each step holds the
+// action and the list as it was before it. Once Claude edits the list, a snapshot would also roll
+// back Claude's edit, so the history starts over.
+type Op = {
+  act: 'tick' | 'reopen' | 'reorder' | 'delete'
+  body: string
+  dir?: -1 | 1 // a reorder's direction
+  snap?: string // the list before the action (on redo: before the undo)
 }
 
-// Undo and redo are the person's own quick take-backs. Once Claude edits the list, the snapshots
-// would also roll back Claude's edit, so the history starts over.
-async function dropHistory($: any): Promise<void> {
-  await update($, undo, () => [])
-  await update($, undoAct, () => [])
+const readOp = (raw: string | undefined): Op | undefined => {
+  try {
+    return raw ? (JSON.parse(raw) as Op) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+// Puts the person's step on the undo stack; a new step clears redo.
+async function pushUndo($: any, op: Op): Promise<void> {
+  await update($, undo, l => [...l, JSON.stringify(op)].slice(-HISTORY))
   await update($, redo, () => [])
-  await update($, redoAct, () => [])
 }
 
 // What the person changed in the pane since Claude last heard, and the list as Claude last knew it.
@@ -266,13 +265,11 @@ const swapUp = (lines: string[], idx: number): string[] | undefined => {
   ]
 }
 
-const toggleLines = (lines: string[], body: string): string[] | undefined => {
+const setMark = (lines: string[], body: string, mark: string): string[] | undefined => {
   const idx = findLine(lines, body)
   if (idx < 0) return undefined
   const out = [...lines]
-  out[idx] = /\[[ ~]\]/.test(out[idx])
-    ? out[idx].replace(/\[[ ~]\]/, '[x]')
-    : out[idx].replace(/\[[xX]\]/, '[ ]')
+  out[idx] = out[idx].replace(/\[( |x|X|-|~)\]/, `[${mark}]`)
 
   return out
 }
@@ -366,8 +363,11 @@ async function load($: any): Promise<void> {
   }
   const cur = await read($, text)
   if (cur !== src) {
-    if (cur) await dropHistory($)
     await update($, text, () => src)
+    if (cur) {
+      await update($, undo, () => [])
+      await update($, redo, () => [])
+    }
   }
 }
 
@@ -375,11 +375,43 @@ async function load($: any): Promise<void> {
 async function noteChange($: any, before: string, what: string): Promise<void> {
   if (!(await read($, seen))) await update($, seen, () => before)
   await update($, changes, l => [...l, what].slice(-HISTORY))
+  tellSoon($)
+}
+
+// Claude hears of pane edits by itself once the person has paused. The full note goes in as a hidden
+// row; while Claude is idle, a one-line message (the change itself) then starts a turn, so Claude
+// can answer it. The long note never shows in the chat.
+const SETTLE_MS = 8000
+let settle: { cancel: () => void } | undefined
+let busy = false
+
+function tellSoon($: any): void {
+  settle?.cancel()
+  settle = $.clock.after(SETTLE_MS, () => void tell($).catch(() => {}))
+}
+
+async function tell($: any): Promise<void> {
+  const log = await read($, changes)
+  if (log.length === 0) return
+  let now = ''
+  try {
+    now = await $.fs.read(await pathOf($))
+  } catch {}
+  if (now === (await read($, seen))) {
+    await update($, changes, () => [])
+    await update($, seen, () => '')
+
+    return
+  }
+  const said = await takeChanges($)
+  if (!said) return
+  await $.session.append({ message: { type: 'user', content: [{ type: 'text', text: said }] } })
+  if (!busy) await $.prompt.submit({ text: clip(`📋 ${log.join('; ')}`, 120), asUser: true })
 }
 
 // The person's pane edits since Claude last heard, as a note for Claude, then cleared.
 // Nothing when they undid their way back to the list Claude knew.
-async function takeChanges($: any): Promise<string | undefined> {
+async function takeChanges($: any, brief = false): Promise<string | undefined> {
   const log = await read($, changes)
   if (log.length === 0) return undefined
   const base = await read($, seen)
@@ -394,78 +426,90 @@ async function takeChanges($: any): Promise<string | undefined> {
   return [
     'Chat Checklist: the user changed the list themselves in the pane since you last saw it:',
     ...log.map(l => `- ${l}`),
-    'The list now:',
-    plainAll(now) || '(empty)',
-    'Take this as their decision: plan from the list as it is now and never put back what they changed. In your reply, say in one short line that you saw their change. If it conflicts with what you were doing or planned (they reopened, removed or reordered a step you depend on, or ticked off something you think is unfinished), ask them to confirm before acting on it.',
+    ...(brief ? [`The list is at ${await pathOf($)}.`] : ['The list now:', plainAll(now) || '(empty)']),
+    'Take this as their decision: plan from the list as it is now and never put back what they changed. Open your next words with one short line reacting to it, not restating it (they know what they did): what it means for the plan ("📋 So we start with X now."), or, when the reason is unclear, a question about it ("📋 X first: do you want to start on it now?"). When the change is all there is to answer, that line is the whole reply. If it conflicts with what you were doing or planned (they reopened, removed or reordered a step you depend on, or ticked off something you think is unfinished), ask them to confirm before acting on it.',
   ].join('\n')
 }
 
-async function stepUndo($: any): Promise<void> {
-  const stack = await read($, undo)
-  if (stack.length === 0) return
-  const prev = stack[stack.length - 1]
+// An action done, or taken back, on the list as it is now; undefined when its item is gone.
+const forward = (op: Op, lines: string[]): string[] | undefined =>
+  op.act === 'tick'
+    ? setMark(lines, op.body, 'x')
+    : op.act === 'reopen'
+      ? setMark(lines, op.body, ' ')
+      : op.act === 'reorder'
+        ? moveLines(lines, op.body, op.dir ?? 1)
+        : removeLines(lines, op.body)
+
+// Takes one step off one stack, puts its list back, and moves the step to the other stack.
+async function step($: any, isUndo: boolean): Promise<void> {
+  const op = readOp((isUndo ? await read($, undo) : await read($, redo)).slice(-1)[0])
+  if (isUndo) await update($, undo, l => l.slice(0, -1))
+  else await update($, redo, l => l.slice(0, -1))
+  if (!op?.snap) return
   const file = await pathOf($)
   const cur = await $.fs.read(file)
-  await $.fs.write(file, prev)
-  await noteChange($, cur, `undo: ${describe(cur, prev)}`)
-  const act = (await read($, undoAct)).slice(-1)[0] ?? 'change'
-  await update($, undo, l => l.slice(0, -1))
-  await update($, undoAct, l => l.slice(0, -1))
-  await update($, redo, l => [...l, cur].slice(-HISTORY))
-  await update($, redoAct, l => [...l, act].slice(-HISTORY))
-  await update($, text, () => prev)
+  const src = op.snap
+  // The drawn text first, so the poll does not take this write for Claude's.
+  await update($, text, () => src)
+  await $.fs.write(file, src)
+  await noteChange($, cur, `${isUndo ? 'undo' : 'redo'}: ${describe(cur, src)}`)
+  const back = JSON.stringify({ ...op, snap: cur })
+  if (isUndo) await update($, redo, l => [...l, back].slice(-HISTORY))
+  else await update($, undo, l => [...l, back].slice(-HISTORY))
 }
 
-async function stepRedo($: any): Promise<void> {
-  const stack = await read($, redo)
-  if (stack.length === 0) return
-  const next = stack[stack.length - 1]
-  const file = await pathOf($)
-  const cur = await $.fs.read(file)
-  await $.fs.write(file, next)
-  await noteChange($, cur, `redo: ${describe(cur, next)}`)
-  const act = (await read($, redoAct)).slice(-1)[0] ?? 'change'
-  await update($, redo, l => l.slice(0, -1))
-  await update($, redoAct, l => l.slice(0, -1))
-  await update($, undo, l => [...l, cur].slice(-HISTORY))
-  await update($, undoAct, l => [...l, act].slice(-HISTORY))
-  await update($, text, () => next)
-}
+const stepUndo = ($: any) => step($, true)
+const stepRedo = ($: any) => step($, false)
 
-// Re-reads the file, applies one edit of the person's to its lines, writes it back.
-async function edit($: any, act: string, what: string, change: (lines: string[]) => string[] | undefined): Promise<void> {
+// Re-reads the file, applies one action of the person's, writes it back.
+async function edit($: any, op: Op, what: string): Promise<void> {
   const file = await pathOf($)
   const before = await $.fs.read(file)
-  const out = change(before.split('\n'))
+  const out = forward(op, before.split('\n'))
   if (!out) return
   const src = out.join('\n')
   if (src === before) return
+  await update($, text, () => src)
   await $.fs.write(file, src)
   await noteChange($, before, what)
-  await pushUndo($, before, act)
-  await update($, text, () => src)
+  await pushUndo($, { ...op, snap: before })
 }
 
 async function rulesOf($: any): Promise<string> {
   const file = await pathOf($)
 
   return [
-    `Chat Checklist: this chat has a running next-step list at ${file}. The user reads it live in the Chat Checklist pane and in the line above the prompt, and you use it as your own working plan, so it is how they know what to do next without re-reading long replies.`,
-    '- Purpose: this is the shared "what next" map for this chat, for the user to scan and for you to plan by. Build it around that purpose, not as a dump of every small action.',
-    '- Granularity: a top-level item is the goal being worked on (e.g. "Redesign the report layout"). The specific adjustments under it are its sub-items. Small fixes one chat can just do do not get their own item.',
-    '- Order by dependency: if a request must happen before a later step, insert it before that step (not at the end); keep related work together; re-think the whole order each time, do not just append.',
-    '- Keep it current with Edit/Write, silently, as part of normal work. Re-read it before editing: the user may have reordered or deleted items themselves. Update it whenever the plan changes, a step finishes, or a new idea appears.',
-    '- Starting mid-chat: if the list is empty (only the header) but this chat already holds work, build the first version once, silently, from what you know: the conversation so far, and the project\'s own notes such as a handoff, progress or TODO file. Read only small notes that are clearly relevant, do not scan the whole folder, and do not invent items you cannot support. Mark finished work `[x]`, current work `[~]`, and keep it short; if you are unsure what is done, say so in a detail line.',
-    '- Item format, one line each: `- [ ] title` (open), `- [~] title` (in progress), `- [x] title` (done), `- [-] title` (set aside). Write item text in the language the user is using in the chat (mixed languages if they mix, one language if they use one; do not translate parts of a mixed sentence). A title is one short line to scan at a glance (about 40 Latin characters or 20 CJK characters).',
-    '- Sub-items: indent two spaces under their parent (`  - [ ] adjust X`). They are the concrete steps of the goal and each has its own state, which you set yourself (the user does not tick them). Mark one `[x]` as soon as it is done; the first open sub-item of the current goal is shown bold as what we are on. Under an in-progress parent all sub-items and details are always shown, so write them out in full as needed (they are shown as bullets); under a done or not-started parent they are collapsed and the user clicks the title to open them. Sub-items have no move or delete controls, you own them.',
-    '- How it looks: done = normal black, in progress = bold black, not started = light gray. Several things can be in progress at once: mark each one `[~]`. Use `[~]` for anything not finished yet, e.g. something the user asked about that you have not fully answered, or work started in parallel. With no `[~]` anywhere, the first open item is shown bold. Change `[~]` to `[x]` when it is really done. Only top-level items have a checkbox the user can click.',
-    '- Strikethrough `[-]` is only for something the user says to leave for now but keep (maybe later, or archive): mark it `[-]`, it stays in the file in gray. Never strike something that is done. If you strike the current item it was not finished, so the next open item becomes current. Delete a line only when the user says to remove it from the plan, or when they click delete (that is their own click, you will see the line gone).',
-    '- Optional detail lines go directly under an item, each as `  > text` (two spaces, `>`). Core details, the reason, what it follows from and leads to. Keep them to about 4 short lines for done or not-started items; for an in-progress item write as much as the work needs. Skip them for trivial steps.',
-    '- If the project already keeps its own handoff or progress notes (for example a handoff file, a progress log or a TODO file), do not duplicate that context here: one line pointing to it is enough.',
-    '- Final state of the chat: a line `status: done` (finished for good), `status: park` (nothing to do now, chat kept for possible new tasks; optional note after it, e.g. `status: park waiting for new data`) or `status: archive` right under the header comment. No line means ongoing. When every top-level item is done, ask the user once in chat whether to mark it done, park or archive, then write the line. If you add a new task while a status line exists, delete the status line (back to ongoing).',
-    '- No history or long rationale in the list. Do not mention the file in chat unless asked.',
-    '- The user can tick, reopen, move and remove items in the pane. Each change they make reaches you as a note (with your next prompt, or in place of your next edit of the list). Their change is their decision: never put it back; acknowledge it in one short line, and ask them to confirm before acting on any change that conflicts with your plan.',
+    `Chat Checklist: this chat keeps a running list at ${file}. The user sees it live in a side pane and in one line above the prompt.`,
+    '- What it is: the desk notebook of this chat, one page you and the user check every turn to see where the work stands and what comes next. It holds reminders, not records. Long details (protocols, logs, decisions, handoffs) live in the project\'s own files or notes; a note here may point to them in a few words.',
+    '- The chat is linear but what the user brings is scattered, like a brainstorm: new ideas, additions to old ones, reminders. The list is the plan that gathers it all into one overview. You may talk about it in chat in a line (e.g. "Good point, I added it under step 3"), or ask where something goes when it is unclear.',
+    '- Triage everything new the user says, every time: do now (put it where it belongs in the order, before the step it must precede); part of an existing step (a sub-item or a note under that step, not a new item); later (after the current work, ordered by dependency); an idea to keep but not do (add it as `[-]` at once). A setting, parameter or caution ("use v2", "exclude C10", "check the units") is a note under the step it affects, even one word, so it is there when that step comes. Chit-chat or a question answered in place changes nothing.',
+    '- Keep it true every turn, silently, with Edit/Write: tick what got done (items and sub-items), mark what you are on `[~]` (several may be), fold duplicates, strike `[-]` what no longer applies, re-order when priorities change. Nothing done may still look open. Re-read the file before editing.',
+    '- Keep it short: a title is one line (about 40 Latin or 20 CJK characters); notes one to three short lines; no history, no rationale. Write in the language the user uses.',
+    '- Format: `- [ ] open`, `- [~] in progress`, `- [x] done`, `- [-] set aside (kept, struck through)`. Top-level items are goals; sub-items, indented two spaces, are their steps. Notes: `  > text` right under their item.',
+    '- An empty list in a chat that already holds work: build a first version once from the conversation and small, clearly relevant project notes; do not invent items.',
+    '- When every top-level item is done, ask once whether the chat is done, parked or archived, then write `status: done`, `status: park` (optional note after it) or `status: archive` under the header. A new item removes the line.',
+    '- The user edits too (tick, reopen, move, remove, on items and sub-items; a sub-item moves only within its item). Their change is their decision: never put it back. A note tells you; open your next words with one short line reacting to it, not restating it: what it means for the plan, or a question about their intent when it is unclear ("📋 X first: start on it now?"); ask before acting on it if it conflicts with the plan. Delete lines only when they do or ask. Do not mention the file in chat unless asked.',
   ].join('\n')
+}
+
+// Compaction may fold the rules note into a summary, so the next prompt carries them again.
+let rulesLost = false
+
+// A one-line nudge with every prompt (about 100 tokens): the open top-level items, so Claude sees
+// stale ones without reading the file, and the ask to triage and update before the turn ends.
+const NUDGE_ITEMS = 8
+async function nudgeOf($: any): Promise<string> {
+  let src = ''
+  try {
+    src = await $.fs.read(await pathOf($))
+  } catch {}
+  const glyph: Record<Mark, string> = { open: '[ ]', doing: '[~]', done: '[x]', dropped: '[-]' }
+  const live = parse(src).filter(it => it.indent === 0 && isLive(it.mark))
+  const shown = live.slice(0, NUDGE_ITEMS).map(it => `${glyph[it.mark]} ${clip(it.body, 30)}`)
+  if (live.length > NUDGE_ITEMS) shown.push(`+${live.length - NUDGE_ITEMS} more`)
+
+  return `Chat Checklist upkeep: before this turn ends, if anything changed, update ${await pathOf($)}: triage what the user just said (now / into a step / later / set aside / a note on the step it affects), tick what got done, keep the order right. Open: ${shown.join(' · ') || 'none'}`
 }
 
 let registered = false
@@ -492,7 +536,7 @@ async function isOn($: any): Promise<boolean> {
 // transcript rows may leave out, and not always first in its message), and Claude's own Edit and
 // Write calls on the list file. The newest trace names the list this chat used last; if it is
 // not this session's own, copy it over.
-const NOTE = /Chat Checklist: this chat has a running next-step list at (\S+\.md)\./g
+const NOTE = /Chat Checklist: this chat (?:has a running next-step list|keeps a running list) at (\S+\.md)\./g
 const LIST_FILE = /\/\.claude\/chat-checklists\/[^/\s]+\.md$/
 
 // The list file a message names, newest trace in it first.
@@ -575,9 +619,36 @@ export const register: Register = on => {
   on('prompt.submit', async ($, e, next) => {
     // A failure here must never hold up the person's prompt.
     await ensure($).catch(() => {})
-    const said = running ? await takeChanges($).catch(() => undefined) : undefined
+    if (!running || e.command) return next(e)
+    const add: string[] = []
+    if (rulesLost) {
+      rulesLost = false
+      add.push(await rulesOf($))
+    }
+    const said = await takeChanges($).catch(() => undefined)
+    if (said) add.push(said)
+    add.push(await nudgeOf($).catch(() => ''))
 
-    return next(said ? { ...e, context: [...(e.context ?? []), said] } : e)
+    return next({ ...e, context: [...(e.context ?? []), ...add.filter(Boolean)] })
+  })
+
+  on('session.compact', async ($, e, next) => {
+    const out = await next(e)
+    if (running && !(out as any)?.skip) rulesLost = true
+
+    return out
+  })
+
+  on('turn.start', async ($, e, next) => {
+    if ((e as any).agentId === undefined) busy = true
+
+    return next(e)
+  })
+
+  on('turn.complete', async ($, e, next) => {
+    if ((e as any).agentId === undefined) busy = false
+
+    return next(e)
   })
 
   // Claude editing the list with pane changes it has not heard of: refuse once, with the changes.
@@ -608,7 +679,7 @@ export const register: Register = on => {
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const src = await read($, text)
     const tops = parse(src).filter(it => it.indent === 0)
-    const up = tops.find(it => isLive(it.mark))
+    const up = tops.find(it => it.mark === 'doing') ?? tops.find(it => isLive(it.mark))
     if (e.props.hasSurvey) return next(e)
     // Turned on but no items yet: say so, so the person knows it is on.
     if (tops.length === 0) {
@@ -661,21 +732,26 @@ export const register: Register = on => {
     const src = await read($, text)
     const items = parse(src)
     const older = await read($, showOlder)
+
     const ask = await read($, pending)
     const open$ = await read($, expanded)
     const room = Math.max(12, (e.props.bodyColumns ?? 40) - 10)
     const canUndo = (await read($, undo)).length > 0
     const canRedo = (await read($, redo)).length > 0
-    const undoTip = (await read($, undoAct)).slice(-1)[0] ?? 'change'
-    const redoTip = (await read($, redoAct)).slice(-1)[0] ?? 'change'
+    const ACT_WORD = { tick: 'tick', reopen: 'reopen', reorder: 'move', delete: 'delete' } as const
+    const undoOp = readOp((await read($, undo)).slice(-1)[0])
+    const redoOp = readOp((await read($, redo)).slice(-1)[0])
+    const undoTip = undoOp ? ACT_WORD[undoOp.act] : 'change'
+    const redoTip = redoOp ? ACT_WORD[redoOp.act] : 'change'
 
-    // A label that floats under the button while the pointer is on it.
-    const tip = (k: string, said: string | undefined) =>
+    // A label that floats under Undo or Redo while the pointer is on it, wide enough for one line.
+    const tip = (said: string | undefined) =>
       said ? (
         <Box
           position="absolute"
           top={1}
           left={0}
+          minWidth={said.length + 4}
           display="none"
           hover={{ display: 'flex' }}
           backgroundColor={TIP_BG}
@@ -683,7 +759,9 @@ export const register: Register = on => {
           borderColor={TIP_EDGE}
           paddingX={1}
         >
-          <Text color={TIP_TEXT}>{said}</Text>
+          <Text color={TIP_TEXT} wrap="truncate">
+            {said}
+          </Text>
         </Box>
       ) : null
 
@@ -713,9 +791,9 @@ export const register: Register = on => {
           onLinkPress={link => {
             if (link.href.endsWith('/copy')) void copyText($, plainOf(src.split('\n'), body))
             else if (link.href.endsWith('/tick'))
-              void edit($, isDone ? 'reopen' : 'tick', isDone ? `reopened "${body}" (was done)` : `marked "${body}" done`, lines => toggleLines(lines, body))
-            else if (link.href.endsWith('/up')) void edit($, 'reorder', `moved "${body}" up`, lines => moveLines(lines, body, -1))
-            else if (link.href.endsWith('/down')) void edit($, 'reorder', `moved "${body}" down`, lines => moveLines(lines, body, 1))
+              void edit($, { act: isDone ? 'reopen' : 'tick', body }, isDone ? `reopened "${body}" (was done)` : `marked "${body}" done`)
+            else if (link.href.endsWith('/up')) void edit($, { act: 'reorder', body, dir: -1 }, `moved "${body}" up`)
+            else if (link.href.endsWith('/down')) void edit($, { act: 'reorder', body, dir: 1 }, `moved "${body}" down`)
             else void update($, pending, () => body)
           }}
         />
@@ -730,7 +808,7 @@ export const register: Register = on => {
           key={`y${k}`}
           plain
           onPress={async () => {
-            await edit($, 'delete', `removed "${body}" with its sub-items and notes`, lines => removeLines(lines, body))
+            await edit($, { act: 'delete', body }, `removed "${body}" with its sub-items and notes`)
             await update($, pending, () => '')
           }}
         >
@@ -761,7 +839,7 @@ export const register: Register = on => {
               text={canUndo ? '[**↶ Undo**](https://chat-checklist.invalid/undo)' : '**↶ Undo**'}
               onLinkPress={() => void stepUndo($)}
             />
-            {canUndo && tip('undo', `Undo ${undoTip}`)}
+            {canUndo && tip(`Undo ${undoTip}`)}
           </Box>
           <Box key="redoAt">
             <Markdown
@@ -770,7 +848,7 @@ export const register: Register = on => {
               text={canRedo ? '[**↷ Redo**](https://chat-checklist.invalid/redo)' : '**↷ Redo**'}
               onLinkPress={() => void stepRedo($)}
             />
-            {canRedo && tip('redo', `Redo ${redoTip}`)}
+            {canRedo && tip(`Redo ${redoTip}`)}
           </Box>
           {items.length > 0 && (
             <Markdown
@@ -831,9 +909,8 @@ export const register: Register = on => {
                   {ask !== it.body && controls(`m${it.line}`, it.body, isDone)}
                 </Box>
                 {ask === it.body && confirm(`${it.line}`, it.body, 3)}
-                {isOpened && (isClipped || it.details.length > 0) && (
+                {isOpened && it.details.length > 0 && (
                   <Box flexDirection="column" marginLeft={5}>
-                    {isClipped && !isBold && <Text color={isDone ? undefined : GRAY}>{it.body}</Text>}
                     {it.details.map(d => (
                       <Text color={isBold || isDone ? undefined : GRAY}>{d}</Text>
                     ))}
@@ -865,7 +942,9 @@ export const register: Register = on => {
                             <Text color={GRAY}>{sub.body}</Text>
                           )}
                         </Box>
+                        {ask !== sub.body && controls(`c${sub.line}`, sub.body, sub.mark === 'done')}
                       </Box>
+                      {ask === sub.body && confirm(`${sub.line}`, sub.body, 2)}
                     </Box>
                   ))}
               </Box>

@@ -7,13 +7,13 @@ const note = (id: string) => `Chat Checklist: this chat has a running next-step 
 const said = (role: 'user' | 'assistant', text: string) => ({ role, text, toolUses: [] })
 
 // Wires the engine beneath the mod: a session id, its transcript and a small file system.
-function world(on: any, id: string, messages: unknown[], files: Record<string, string>) {
+function world(on: any, id: string, messages: unknown[], files: Record<string, string>, ownClock = true) {
   const writes: Record<string, string> = {}
   mock.env(on, { HOME })
   on('session.id', () => ({ value: id }))
   on('session.messages', () => ({ value: messages }))
   on('command.register', () => ({ value: { command: 'chat-checklist' } }))
-  on('clock.every', () => ({ value: undefined }))
+  if (ownClock) on('clock.every', () => ({ value: undefined }))
   on('fs.read', ($: any, e: any, next: any) => {
     const src = writes[e.path] ?? files[e.path]
 
@@ -266,7 +266,7 @@ test('a change made in the pane reaches Claude once, with the next prompt', asyn
   const said = (seen[0]?.context ?? []).join('\n')
   expect(said).toContain('reopened "Load the data" (was done)')
   expect(said).toContain('- [ ] Load the data')
-  expect(seen[1]?.context ?? []).toHaveLength(0)
+  expect((seen[1]?.context ?? []).join('\n')).not.toContain('changed the list')
 })
 
 test('a change undone before Claude hears of it is not reported', async ($, on) => {
@@ -287,7 +287,7 @@ test('a change undone before Claude hears of it is not reported', async ($, on) 
   await pane.unmount()
 
   await $.prompt.submit({ text: 'go on' })
-  expect(seen[0]?.context ?? []).toHaveLength(0)
+  expect((seen[0]?.context ?? []).join('\n')).not.toContain('changed the list')
 })
 
 test("Claude's edit of the list over an unheard pane change is refused once, with the change", async ($, on) => {
@@ -305,4 +305,118 @@ test("Claude's edit of the list over an unheard pane change is refused once, wit
   expect(first.deny).toContain('reopened "Load the data"')
   const again: any = await $.tool.call(edit)
   expect(again.deny).toBeUndefined()
+})
+
+test('after a pause, an idle chat gets one short line, the full note going in hidden', async ($, on) => {
+  world(on, 'v', [], { [`${dir}/v.md`]: SHOWN, [`${dir}/v.on`]: 'on\n' }, false)
+  const clock = mock.clock(on)
+  const session = mock.session(on)
+  on('ui.panes', () => ({ value: [] }))
+  const seen: any[] = []
+  on('prompt.submit', (_: any, e: any) => {
+    seen.push(e)
+
+    return { text: e.text }
+  })
+  await begin($)
+  const pane = await mountPane($, 'desktop')
+  const done = await pane.find({ type: 'Markdown', text: /↺/ } as any)
+  await pane.press({ key: (done as any).key, link: tick })
+  await pane.unmount()
+  expect(seen).toHaveLength(0)
+  await clock.advance(8000)
+  expect(seen).toHaveLength(1)
+  expect(seen[0].text).toBe('📋 reopened "Load the data" (was done)')
+  const hidden = JSON.stringify(session.appended())
+  expect(hidden).toContain('changed the list themselves')
+})
+
+test("undo puts back the person's last action, and Claude's edit starts the history over", async ($, on) => {
+  const writes = world(on, 'v', [], { [`${dir}/v.md`]: SHOWN, [`${dir}/v.on`]: 'on\n' }, false)
+  const clock = mock.clock(on)
+  on('ui.panes', () => ({ value: [] }))
+  on('ui.toast', () => ({ value: undefined }))
+  on('prompt.submit', (_: any, e: any) => ({ text: e.text }))
+  await begin($)
+  const pane = await mountPane($, 'desktop')
+  const done = await pane.find({ type: 'Markdown', text: /↺/ } as any)
+  await pane.press({ key: (done as any).key, link: { href: 'https://chat-checklist.invalid/down' } })
+  expect(writes[`${dir}/v.md`]).toContain('- [~] Fix the batch effect\n  - [x] Check PCA\n  - [ ] Rerun\n- [x] Load the data')
+  expect((await pane.find({ type: 'Text', text: /^Undo / }))?.text).toBe('Undo move')
+  await pane.press({ key: 'undo', link: { href: 'https://chat-checklist.invalid/undo' } })
+  expect(writes[`${dir}/v.md`]).toBe(SHOWN)
+
+  // Claude edits the list: the poll sees it and undo and redo are gone.
+  writes[`${dir}/v.md`] = SHOWN + '- [ ] Claude added this\n'
+  await clock.advance(2000)
+  expect(await pane.find({ type: 'Text', text: /^(Undo|Redo) / })).toBeUndefined()
+  await pane.unmount()
+})
+
+test('every prompt carries the upkeep note with the open items, and the rules again after a compaction', async ($, on) => {
+  world(on, 'v', [], { [`${dir}/v.md`]: SHOWN, [`${dir}/v.on`]: 'on\n' })
+  const seen: any[] = []
+  on('prompt.submit', (_: any, e: any) => {
+    seen.push(e)
+
+    return { text: e.text }
+  })
+  on('session.compact', (_: any, e: any) => ({ messages: e.messages }))
+  await begin($)
+  await $.prompt.submit({ text: 'go on' })
+  const first = (seen[0]?.context ?? []).join('\n')
+  expect(first).toContain('Chat Checklist upkeep')
+  expect(first).toContain('[~] Fix the batch effect')
+  expect(first).toContain('[ ] Draft the figure')
+  expect(first).not.toContain('Load the data')
+  expect(first).not.toContain('desk notebook')
+
+  await $.session.compact({ trigger: 'manual', messages: [{ role: 'user', text: 'summary', toolUses: [] }] } as any)
+  await $.prompt.submit({ text: 'and then' })
+  expect((seen[1]?.context ?? []).join('\n')).toContain('desk notebook')
+  await $.prompt.submit({ text: 'more' })
+  expect((seen[2]?.context ?? []).join('\n')).not.toContain('desk notebook')
+})
+
+test('a rules note in the newer wording names the list too', async ($, on) => {
+  const writes = world(on, 'new', [said('user', `Chat Checklist: this chat keeps a running list at ${dir}/old.md. The user sees it live.`)], {
+    [`${dir}/old.md`]: LIST,
+  })
+  await begin($)
+
+  expect(writes[`${dir}/new.md`]).toBe(LIST)
+})
+
+test('a sub-item can be ticked and moved, but only within its item', async ($, on) => {
+  const writes = world(on, 'v', [], { [`${dir}/v.md`]: SHOWN, [`${dir}/v.on`]: 'on\n' })
+  on('ui.panes', () => ({ value: [] }))
+  await begin($)
+  const pane = await mountPane($, 'desktop')
+  const rows = await pane.findAll({ type: 'Markdown', text: /\/up/ } as any)
+  expect(rows.length).toBeGreaterThanOrEqual(4)
+  const rerun = (await pane.findAll({ type: 'Markdown' } as any)).filter((m: any) => /^c\d/.test(m.key ?? ''))
+  expect(rerun.length).toBe(2)
+  const last = rerun[1] as any
+  await pane.press({ key: last.key, link: { href: 'https://chat-checklist.invalid/tick' } })
+  expect(writes[`${dir}/v.md`]).toContain('  - [x] Rerun')
+  await pane.press({ key: last.key, link: { href: 'https://chat-checklist.invalid/down' } })
+  expect(writes[`${dir}/v.md`]).toContain('  - [x] Check PCA\n  - [x] Rerun\n- [ ] Draft the figure')
+  await pane.press({ key: (rerun[0] as any).key, link: { href: 'https://chat-checklist.invalid/up' } })
+  expect(writes[`${dir}/v.md`]).toContain('- [~] Fix the batch effect\n  - [x] Check PCA')
+  await pane.press({ key: last.key, link: { href: 'https://chat-checklist.invalid/up' } })
+  expect(writes[`${dir}/v.md`]).toContain('- [~] Fix the batch effect\n  - [x] Rerun\n  - [x] Check PCA')
+  await pane.unmount()
+})
+
+test('opening a clipped title does not repeat it', async ($, on) => {
+  const long = '# Chat Checklist\n<!-- header -->\n- [x] A very long finished title that will not fit in the narrow pane at all\n  > one note\n- [~] Now\n'
+  world(on, 'v', [], { [`${dir}/v.md`]: long, [`${dir}/v.on`]: 'on\n' })
+  on('ui.panes', () => ({ value: [] }))
+  await begin($)
+  const pane = await mountPane($, 'desktop')
+  const title = await pane.find({ type: 'Button', text: /A very long/ })
+  await pane.press({ key: (title as any).key })
+  expect(await pane.find({ type: 'Text', text: 'one note' })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: /narrow pane at all$/ })).toBeUndefined()
+  await pane.unmount()
 })

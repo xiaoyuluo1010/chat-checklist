@@ -2,7 +2,7 @@
 
 A Claude Code mod that helps record and track the workflow of each chat. It gives every chat its own **checklist of next steps**.
 
-Claude writes and updates the list by itself while it works. You read it at a glance, tick things, reorder, and remove, without re-reading long replies to find out what comes next.
+Think of it as the notebook beside your keyboard: one page you and Claude check every turn to see where the work stands and what comes next. A chat is linear, but what you bring to it is scattered, like a brainstorm: new ideas, additions to old ones, reminders. Claude gathers them into this one plan and keeps it current while it works. You read it at a glance and tick, reorder or remove things yourself. It holds reminders, not records: long details stay in your project's own files.
 
 ## Install
 
@@ -52,22 +52,18 @@ Click `open list ›` to open the full list in a side pane, `close list ›` to 
 Sub-steps use the same three marks. The desktop app, the editor and mobile draw them as small pictures (a filled blue circle with a white tick, a thick green ring, a thin gray ring); the terminal uses the text glyphs.
 
 - Click a done or not-started title to expand its sub-steps and notes. The item in progress is always expanded.
-- Hover an item to get `⧉ ✓ ▲ ▼ ✕` (copy, tick, move up, move down, remove). On a done item the tick is `↺`, which reopens it. Remove asks for confirmation.
+- Hover an item or a sub-step to get `⧉ ✓ ▲ ▼ ✕` (copy, tick, move up, move down, remove). On a done one the tick is `↺`, which reopens it. A sub-step moves only within its item. Remove asks for confirmation.
 - `⧉` copies the item with its sub-steps and notes as plain text; `⧉ Copy all` at the top copies the whole list. The pane's text cannot be selected with the mouse (the app draws it natively), so these are the way to copy.
-- `↶ Undo` / `↷ Redo` at the top take back your own last clicks in the pane (tick, reopen, reorder, delete). Hover either one to see which, e.g. `Undo reorder`. When Claude edits the list, this history starts over, so an undo never rolls back Claude's work.
+- `↶ Undo` / `↷ Redo` at the top take back your own last clicks, for the moment you regret one. Hover either to see which, e.g. `Undo move`. Once Claude edits the list, this history is cleared, so an undo never rolls back Claude's work; for anything older, just tell Claude what to put back.
 - The bottom label shows the chat's state: **Ongoing**, **Done**, **Parked**, **Archive**.
 
 ## Who edits what
 
-| | You | Claude |
-|---|---|---|
-| Top-level items | tick, reorder, remove | add, reword, mark in progress or done |
-| Sub-items and notes | read only | fully owns them |
+Both of you. Claude keeps the list current silently as part of normal work; you change it with the pane's buttons whenever you like. Your change is your decision, and Claude hears of it:
 
-Claude keeps the list current silently as part of normal work. What you change in the pane is passed to Claude, so it never plans from a stale list or puts your change back:
-
-- With your next message, Claude gets a short note listing your changes and the list as it now stands. It says in one line that it saw them, and asks you to confirm if a change conflicts with its plan (for example you reopened a step, or removed one it depends on).
-- If Claude tries to edit the list mid-reply after you changed it, that edit is refused once with the same note, so it re-reads and builds on your version.
+- About 8 seconds after you stop clicking, Claude gets the details in the background. If Claude was idle, one short line such as `📋 moved "Draft the figure" up` appears in the chat and Claude answers it: not by repeating what you did, but by reacting to it (what it means for the plan, or a question when your intent is unclear).
+- If Claude is mid-reply, the note goes into that reply instead.
+- If a change conflicts with the plan (you reopened a step, removed one it depends on, ticked off something unfinished), Claude asks before acting on it. It never puts your change back.
 - Changes you undo before Claude hears of them are not reported.
 - Only edits made with the pane's buttons are tracked. If you edit the file by hand, tell Claude.
 
@@ -75,12 +71,15 @@ Claude keeps the list current silently as part of normal work. What you change i
 
 These are injected into the chat automatically (you do not need to paste anything). Short version:
 
-- **A top-level item is a goal**, not a small action. Its concrete steps are sub-items.
-- **Order follows dependency.** If a new request must happen first, it goes before the later step, not at the end.
-- **States:** `[ ]` not started, `[~]` in progress (several allowed), `[x]` done, `[-]` set aside on purpose. A done item is never struck through.
+- **Triage everything new you say:** do now (placed where it belongs in the order), part of an existing step (a sub-step or a note under it), later (after the current work), or keep but not do (set aside at once). Chit-chat changes nothing.
+- **Settings and cautions become notes:** "use v2", "exclude C10", "check the units" is written under the step it affects, even as one word, so it is there when that step comes.
+- **True every turn:** what is done is ticked, what is being worked on is marked, duplicates are folded, stale items struck. Nothing done may still look open.
+- **Short:** one-line titles, one to three short notes; no history, no rationale. Long details stay in the project's own files.
+- **States:** `[ ]` not started, `[~]` in progress (several allowed), `[x]` done, `[-]` set aside on purpose.
 - **Language:** items are written in the language you use in the chat.
-- **Chat status:** when every item is done, Claude asks once whether to mark the chat *done* (finished for good), *park* (kept for possible new tasks) or *archive*. Adding a new task later returns the chat to Ongoing.
-- **No history log.** The list is a plan, not a record. If your project already keeps handoff notes, the list only points to them.
+- **Chat status:** when every item is done, Claude asks once whether to mark the chat *done*, *park* or *archive*. A new task returns it to Ongoing.
+
+Cost: the rules (about 700 tokens) are added once per chat, and again after the chat is compacted. Each of your messages carries a one-line reminder (about 100 tokens) listing the open items, so Claude checks the list against what is true before it finishes its reply.
 
 Full text of the rules: `rulesOf` in `hooks/register.tsx`.
 
